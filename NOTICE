@@ -1,0 +1,28 @@
+Open Brand Exchange · reference node (node-rs)
+Copyright 2026 Open Brand Exchange Foundation (in formation) and contributors
+
+Open Brand Exchange Foundation (in formation)
+Contact: hello@openbrandexchange.com · Security reports: security@openbrandexchange.com
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License, version 3 only (see
+LICENSE). If you run a modified version for others over a network, you must
+offer them its source code (AGPL-3.0 section 13).
+
+The copyright of the publisher and the name "Open Brand Exchange" are to be
+transferred to the Open Brand Exchange Foundation, a Dutch stichting that is
+being set up (see https://github.com/openbrandexchange/spec/blob/main/docs/governance.md).
+Contributions by others remain the copyright of their authors and are licensed
+under the same licence (Developer Certificate of Origin, see CONTRIBUTING.md).
+
+This product includes:
+
+- The Open Brand Exchange admin UI (ui/dist), Apache-2.0,
+  https://github.com/openbrandexchange/admin-ui. Its own licence and
+  third-party notices are shipped with it in ui/dist.
+- Vocabularies and fixtures of the Open Brand Exchange specification
+  (spec/), CC-BY-4.0, "Open Brand Exchange specification, © Open Brand
+  Exchange Foundation (in formation) and contributors",
+  https://github.com/openbrandexchange/spec.
+- Rust crates compiled into the binary, under permissive licences (MIT,
+  Apache-2.0, BSD, ISC, Zlib, Unicode-3.0), checked with cargo-deny.
