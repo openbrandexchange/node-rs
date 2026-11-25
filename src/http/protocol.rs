@@ -477,8 +477,12 @@ pub async fn discovery(State(app): State<App>) -> Res {
             "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
         },
         "access_requests_url": s.portal.access_requests_enabled.then(|| format!("{base}/obx/v1/access-requests")),
-        "ingest_url": format!("{base}/obx/v1/ingest"),
-        "capabilities": capabilities(&s),
+        // The demo portal has no webhooks, Ingest API or usage events (docs/demo.md).
+        "ingest_url": (!a.cfg.demo).then(|| format!("{base}/obx/v1/ingest")),
+        "capabilities": capabilities(&s)
+            .into_iter()
+            .filter(|c| !(a.cfg.demo && matches!(*c, "webhooks" | "ingest" | "usage")))
+            .collect::<Vec<_>>(),
         "brands": brands,
         "languages": s.content_languages(),
         "limits": {"changes_page_max": 500, "products_page_max": 100, "gtin_lookup_max": 2000,

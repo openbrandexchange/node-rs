@@ -21,6 +21,9 @@ pub struct Problem {
     pub errors: Vec<FieldError>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
+    /// RFC 9457 extension members (for example `x-obx-demo`).
+    #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
 }
 
 pub type Result<T> = std::result::Result<T, Problem>;
@@ -127,7 +130,14 @@ impl Problem {
             obx_error: code.into(),
             errors: Vec::new(),
             retry_after: None,
+            extensions: serde_json::Map::new(),
         }
+    }
+
+    /// Adds an extension member.
+    pub fn extension(mut self, name: &str, value: serde_json::Value) -> Problem {
+        self.extensions.insert(name.into(), value);
+        self
     }
 
     /// Adds a field error (JSON Pointer or CSV locator; "" = whole document).

@@ -248,12 +248,21 @@ pub async fn image_upload(
         .db
         .read(|c| Ok(c.query_row("SELECT COUNT(*) FROM branding_images", [], |r| r.get(0))?))
         .await?;
-    if n as usize >= look::MAX_IMAGES {
+    let max = if app.cfg.demo {
+        crate::demo::MAX_IMAGES
+    } else {
+        look::MAX_IMAGES
+    };
+    if n as usize >= max {
         return Err(Problem::new(
             "limit_exceeded",
             format!(
-                "This node keeps at most {} branding images; delete unused ones first.",
-                look::MAX_IMAGES
+                "This node keeps at most {max} branding images{}; delete unused ones first.",
+                if app.cfg.demo {
+                    " (the demo's limit)"
+                } else {
+                    ""
+                }
             ),
         )
         .with_status(409));

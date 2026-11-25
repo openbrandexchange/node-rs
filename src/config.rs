@@ -42,6 +42,14 @@ pub struct Config {
     pub log_level: String,
     /// Conformance testing only: lower the per-minute API limit.
     pub test_rate_limit: Option<u32>,
+    /// `OBX_DEMO`: public demo mode (docs/demo.md). Every reset deletes all data.
+    pub demo: bool,
+    /// `OBX_DEMO_RESET_MINUTES`: reset interval in demo mode.
+    pub demo_reset_minutes: i64,
+    /// `OBX_DEMO_MAX_UPLOAD_BYTES`: largest request body in demo mode.
+    pub demo_max_upload_bytes: u64,
+    pub demo_turnstile_site_key: Option<String>,
+    pub demo_turnstile_secret: Option<String>,
 }
 
 /// Every variable node-rs reads; others with the `OBX_` prefix are reported
@@ -81,6 +89,11 @@ const KNOWN: &[&str] = &[
     "OBX_HTTPS_PORT",
     "OBX_ACME_DIRECTORY",
     "OBX_VERSION",
+    "OBX_DEMO",
+    "OBX_DEMO_RESET_MINUTES",
+    "OBX_DEMO_MAX_UPLOAD_BYTES",
+    "OBX_DEMO_TURNSTILE_SITE_KEY",
+    "OBX_DEMO_TURNSTILE_SECRET",
 ];
 
 fn env(k: &str) -> Option<String> {
@@ -206,6 +219,20 @@ impl Config {
         let access_log = env_bool(&mut p, "OBX_ACCESS_LOG", true);
         let shutdown_delay_secs = env_int(&mut p, "OBX_SHUTDOWN_DELAY", 0, 0, 60) as u64;
         let test_rate_limit = env("OBX_TEST_RATE_LIMIT").and_then(|v| v.parse().ok());
+        let demo = env_bool(&mut p, "OBX_DEMO", false);
+        let demo_reset_minutes = env_int(&mut p, "OBX_DEMO_RESET_MINUTES", 60, 5, 10080);
+        let demo_max_upload_bytes = env_int(
+            &mut p,
+            "OBX_DEMO_MAX_UPLOAD_BYTES",
+            2 << 20,
+            65536,
+            32 << 20,
+        ) as u64;
+        let demo_turnstile_site_key = env("OBX_DEMO_TURNSTILE_SITE_KEY").filter(|v| !v.is_empty());
+        let demo_turnstile_secret = env("OBX_DEMO_TURNSTILE_SECRET").filter(|v| !v.is_empty());
+        if demo && demo_turnstile_secret.is_some() && demo_turnstile_site_key.is_none() {
+            p.push("OBX_DEMO_TURNSTILE_SECRET needs OBX_DEMO_TURNSTILE_SITE_KEY (the widget's public site key).".into());
+        }
         for (k, _) in std::env::vars() {
             if k.starts_with("OBX_") && !KNOWN.contains(&k.as_str()) {
                 p.push(format!("{k} is not a node-rs setting (a typo?)"));
@@ -250,6 +277,11 @@ impl Config {
             log_format: env("OBX_LOG_FORMAT").unwrap_or_else(|| "text".into()),
             log_level: env("OBX_LOG_LEVEL").unwrap_or_else(|| "info".into()),
             test_rate_limit,
+            demo,
+            demo_reset_minutes,
+            demo_max_upload_bytes,
+            demo_turnstile_site_key,
+            demo_turnstile_secret,
         })
     }
 
@@ -284,6 +316,11 @@ impl Config {
             log_format: "text".into(),
             log_level: "info".into(),
             test_rate_limit: None,
+            demo: false,
+            demo_reset_minutes: 60,
+            demo_max_upload_bytes: 2 << 20,
+            demo_turnstile_site_key: None,
+            demo_turnstile_secret: None,
         }
     }
 

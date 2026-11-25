@@ -374,7 +374,8 @@ pub struct Mailer {
 impl Mailer {
     pub fn new(cfg: &crate::config::Config) -> Mailer {
         Mailer {
-            smtp_url: cfg.smtp_url.clone(),
+            // Demo mode never sends e-mail, whatever is configured.
+            smtp_url: cfg.smtp_url.clone().filter(|_| !cfg.demo),
             from: cfg.mail_from.clone(),
             log_bodies: cfg.mail_log_bodies,
             sent: Mutex::new(VecDeque::new()),

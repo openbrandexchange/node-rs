@@ -14,6 +14,7 @@ obx-auth = { path = "crates/obx-auth" }
 obx-sign = { path = "crates/obx-sign" }
 obx-feed = { path = "crates/obx-feed" }
 obx-axum = { path = "crates/obx-axum" }
+obx-conformance = { path = "crates/obx-conformance" }
 # The import format crate was called obx-format inside node-rs.
 obx-format = { package = "obx-ingest", path = "crates/obx-ingest" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs", "time", "sync", "net", "io-util"] }

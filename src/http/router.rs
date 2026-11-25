@@ -498,6 +498,11 @@ pub fn router(app: App) -> Router {
         )
         .route("/admin/api/audit-log", get(crate::audit::h_list))
         // end lane A
+        // demo mode (OBX_DEMO; answer 404 otherwise)
+        .route("/admin/api/demo", get(crate::demo::h_info))
+        .route("/admin/api/demo/login", post(crate::demo::h_login))
+        .route("/admin/api/demo/reset", post(crate::demo::h_reset))
+        // end demo mode
         .route("/obx/{*rest}", any(api_fallback))
         .route("/admin/api/{*rest}", any(api_fallback))
         .route_layer(middleware::from_fn_with_state(
@@ -509,6 +514,10 @@ pub fn router(app: App) -> Router {
         .method_not_allowed_fallback(method_not_allowed)
         .layer(axum::extract::DefaultBodyLimit::max(
             crate::app::MAX_IMPORT_BYTES as usize,
+        ))
+        .layer(middleware::from_fn_with_state(
+            app.clone(),
+            crate::demo::guard,
         ))
         .layer(middleware::from_fn_with_state(app.clone(), headers_mw))
         .layer(middleware::from_fn_with_state(app.clone(), observe_mw))
