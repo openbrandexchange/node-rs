@@ -1,0 +1,25 @@
+[package]
+name = "obx-sign"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["obx", "open-brand-exchange", "signed-url", "webhook", "hmac"]
+categories = ["cryptography", "web-programming"]
+description = "Open Brand Exchange (OBX) signatures: windowed signed asset URLs with a stable cache key, and webhook signatures"
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+obx-auth = { version = "0.1.0", path = "../obx-auth" }
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+url = "2"
+
+[dev-dependencies]
+serde_json = { workspace = true }

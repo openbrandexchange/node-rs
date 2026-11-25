@@ -71,27 +71,22 @@ impl Vocabulary {
     }
 }
 
-static PARTS: LazyLock<Vocabulary> = LazyLock::new(|| {
-    Vocabulary::load(
-        "parts",
-        include_str!("../../../spec/vocabularies/parts.json"),
-    )
-});
+static PARTS: LazyLock<Vocabulary> =
+    LazyLock::new(|| Vocabulary::load("parts", include_str!("../spec/vocabularies/parts.json")));
 static MATERIALS: LazyLock<Vocabulary> = LazyLock::new(|| {
     Vocabulary::load(
         "materials",
-        include_str!("../../../spec/vocabularies/materials.json"),
+        include_str!("../spec/vocabularies/materials.json"),
     )
 });
 static QUALIFIERS: LazyLock<Vocabulary> = LazyLock::new(|| {
     Vocabulary::load(
         "qualifiers",
-        include_str!("../../../spec/vocabularies/qualifiers.json"),
+        include_str!("../spec/vocabularies/qualifiers.json"),
     )
 });
-static CARE: LazyLock<Vocabulary> = LazyLock::new(|| {
-    Vocabulary::load("care", include_str!("../../../spec/vocabularies/care.json"))
-});
+static CARE: LazyLock<Vocabulary> =
+    LazyLock::new(|| Vocabulary::load("care", include_str!("../spec/vocabularies/care.json")));
 
 /// The part codes.
 pub fn parts() -> &'static Vocabulary {

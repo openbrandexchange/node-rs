@@ -1,0 +1,28 @@
+[package]
+name = "obx-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["obx", "open-brand-exchange", "oauth2", "argon2"]
+categories = ["authentication", "cryptography"]
+description = "Open Brand Exchange (OBX) secrets: tokens, constant-time comparison, argon2id passwords, derived keys, access tokens, client credentials and signed cursors"
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+base64 = "0.22"
+rand = "0.9"
+argon2 = "0.5"
+aes-gcm = "0.10"
+subtle = "2"
+url = "2"

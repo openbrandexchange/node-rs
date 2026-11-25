@@ -1,0 +1,27 @@
+[package]
+name = "obx-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["obx", "open-brand-exchange", "client", "product-data", "retail"]
+categories = ["api-bindings", "web-programming::http-client"]
+description = "Open Brand Exchange (OBX) client for retailer software: discovery, OAuth2 client credentials, catalog, GTIN lookup, change feed, assets and access requests"
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+obx-types = { version = "0.1.0", path = "../obx-types", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["sync", "time"] }
+url = "2"
+bytes = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

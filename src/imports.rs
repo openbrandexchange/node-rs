@@ -3145,7 +3145,7 @@ mod tests {
         .unwrap();
         let fx = PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/spec/fixtures/maison-noor"
+            "/crates/obx-conformance/fixtures/maison-noor"
         ));
         let run = run_import_cli(
             &app,
@@ -3174,8 +3174,10 @@ mod tests {
             })
             .await
             .unwrap();
-        let want: Value =
-            serde_json::from_str(include_str!("../spec/fixtures/expected/counts.json")).unwrap();
+        let want: Value = serde_json::from_str(include_str!(
+            "../crates/obx-conformance/fixtures/expected/counts.json"
+        ))
+        .unwrap();
         assert_eq!(
             counts,
             (

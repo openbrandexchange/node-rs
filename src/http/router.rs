@@ -12,9 +12,6 @@ use super::{access, admin, feed, ingest, protocol, ui};
 use crate::app::App;
 use crate::problem::Problem;
 
-const UI_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
-const API_CSP: &str = "default-src 'none'; frame-ancestors 'none'; sandbox";
-
 async fn headers_mw(State(app): State<App>, req: Request, next: Next) -> Response {
     let p = req.uri().path().to_string();
     let protocol = p.starts_with("/obx/") || p == "/.well-known/obx";
@@ -27,44 +24,15 @@ async fn headers_mw(State(app): State<App>, req: Request, next: Next) -> Respons
     } else {
         next.run(req).await
     };
-    let h = r.headers_mut();
-    h.insert(
-        "x-content-type-options",
-        HeaderValue::from_static("nosniff"),
-    );
-    h.insert(
-        "referrer-policy",
-        HeaderValue::from_static("strict-origin-when-cross-origin"),
-    );
-    h.insert("x-frame-options", HeaderValue::from_static("DENY"));
-    h.insert(
-        "permissions-policy",
-        HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=(), usb=()"),
-    );
-    if app.cfg.secure() {
-        h.insert(
-            "strict-transport-security",
-            HeaderValue::from_static("max-age=31536000"),
-        );
-    }
-    if ui {
-        h.insert(
-            header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static(UI_CSP),
-        );
-        h.insert(
-            "cross-origin-opener-policy",
-            HeaderValue::from_static("same-origin"),
-        );
+    let surface = if protocol {
+        obx_axum::Surface::Protocol
+    } else if ui {
+        obx_axum::Surface::Ui
     } else {
-        h.insert(
-            header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static(API_CSP),
-        );
-    }
-    if protocol {
-        h.insert("obx-version", HeaderValue::from_static("0.3"));
-    }
+        obx_axum::Surface::Api
+    };
+    obx_axum::security_headers(r.headers_mut(), surface, app.cfg.secure());
+    let h = r.headers_mut();
     if p == "/.well-known/obx" {
         h.insert(
             header::ACCESS_CONTROL_ALLOW_ORIGIN,
@@ -286,7 +254,8 @@ pub fn router(app: App) -> Router {
             "/admin/api/ingest-tokens/{id}/rotate",
             post(admin::ingest_token_rotate),
         )
-        .route("/admin/api/stats", get(admin::stats))
+        .route("/admin/api/stats", get(crate::stats::h_stats))
+        .route("/admin/api/stats/events", get(crate::stats::h_stats_events))
         .route("/admin/api/me", axum::routing::patch(admin::me_patch))
         .route("/admin/api/portal/viewer", get(admin::portal_viewer))
         .route(

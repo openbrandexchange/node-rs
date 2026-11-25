@@ -8,8 +8,6 @@ use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -20,21 +18,8 @@ use crate::catalog::{expired, normalize_gtin};
 use crate::model::*;
 use crate::store::blob_key;
 
-pub const ALL_SCOPES: [&str; 4] = [
-    "catalog:read",
-    "media:read",
-    "media:original",
-    "usage:write",
-];
-const ACCESS_TOKEN_TTL: i64 = 3600;
-
-#[derive(Serialize, Deserialize)]
-struct Claims {
-    c: String,
-    v: i64,
-    s: String,
-    e: i64,
-}
+pub const ALL_SCOPES: [&str; 4] = obx_types::scopes::ALL;
+const ACCESS_TOKEN_TTL: i64 = obx_auth::token::TTL_SECS;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -96,16 +81,13 @@ fn oauth_error(status: u16, code: &str, desc: &str) -> Response {
 }
 
 fn issue_token(app: &App, client_row: &str, version: i64, scopes: &[String]) -> String {
-    let payload = URL_SAFE_NO_PAD.encode(
-        serde_json::to_vec(&Claims {
-            c: client_row.into(),
-            v: version,
-            s: scopes.join(" "),
-            e: chrono::Utc::now().timestamp() + ACCESS_TOKEN_TTL,
-        })
-        .unwrap(),
-    );
-    format!("obxa_{payload}.{}", app.keys.sign("access-token", &payload))
+    obx_auth::AccessToken {
+        client: client_row.into(),
+        version,
+        scopes: scopes.to_vec(),
+        expires: chrono::Utc::now().timestamp() + ACCESS_TOKEN_TTL,
+    }
+    .issue(&app.keys)
 }
 
 pub async fn token(
@@ -118,7 +100,7 @@ pub async fn token(
     if let Err(p) = rate_limit(&app, &format!("token:{ip}"), 30) {
         return p.into_response();
     }
-    let form: HashMap<String, String> = url::form_urlencoded::parse(&body).into_owned().collect();
+    let form = obx_auth::oauth::parse_form(&body);
     if form.get("grant_type").map(String::as_str) != Some("client_credentials") {
         return oauth_error(
             400,
@@ -126,37 +108,12 @@ pub async fn token(
             "Only client_credentials is supported.",
         );
     }
-    let (mut id, mut secret) = (String::new(), String::new());
-    if let Some(v) = headers
+    let auth = headers
         .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-    {
-        if v.len() > 6 && v[..6].eq_ignore_ascii_case("basic ") {
-            if let Some(dec) = base64::engine::general_purpose::STANDARD
-                .decode(v[6..].trim())
-                .ok()
-                .and_then(|b| String::from_utf8(b).ok())
-            {
-                if let Some((a, b)) = dec.split_once(':') {
-                    let un = |s: &str| {
-                        url::form_urlencoded::parse(format!("x={s}").as_bytes())
-                            .next()
-                            .map(|(_, v)| v.into_owned())
-                            .unwrap_or_default()
-                    };
-                    id = un(&a.replace('+', "%2B"));
-                    secret = un(&b.replace('+', "%2B"));
-                }
-            }
-        }
-    }
-    if id.is_empty() {
-        id = form.get("client_id").cloned().unwrap_or_default();
-        secret = form.get("client_secret").cloned().unwrap_or_default();
-    }
-    if id.is_empty() || secret.is_empty() {
+        .and_then(|v| v.to_str().ok());
+    let Some((id, secret)) = obx_auth::oauth::client_credentials(auth, &form) else {
         return oauth_error(401, "invalid_client", "Client authentication failed.");
-    }
+    };
     let scope = form.get("scope").cloned().unwrap_or_default();
     let a = app.clone();
     let out = app
@@ -176,21 +133,16 @@ pub async fn token(
             };
             let s = Settings::load(c)?;
             let eff = effective_scopes(&s, &cl, &ret);
-            let mut scopes = eff.clone();
-            if !scope.trim().is_empty() {
-                scopes = Vec::new();
-                for x in scope.split_whitespace() {
-                    if !eff.iter().any(|e| e == x) {
-                        return Ok(Err((
-                            400,
-                            "invalid_scope",
-                            format!("Scope {x} is not available to this client."),
-                        )));
-                    }
-                    scopes.push(x.to_string());
+            let scopes = match obx_auth::oauth::grant_scopes(&scope, &eff) {
+                Ok(s) => s,
+                Err(x) => {
+                    return Ok(Err((
+                        400,
+                        "invalid_scope",
+                        format!("Scope {x} is not available to this client."),
+                    )));
                 }
-            }
-            scopes.sort();
+            };
             Ok(Ok((cl, scopes)))
         })
         .await;
@@ -256,37 +208,26 @@ fn viewer_for_client(
             && original_allowed(&s, &ret),
         scopes,
         client_row_id: cl.id,
-        user_id: String::new(),
+        client_name: cl.name,
+        ..Default::default()
     })
 }
 
 pub fn viewer_from_token(app: &App, c: &Connection, tok: &str) -> Result<Viewer> {
     let invalid = || Problem::new("invalid_token", "The access token is invalid or expired.");
-    let body = tok.strip_prefix("obxa_").ok_or_else(invalid)?;
-    let (payload, sig) = body.rsplit_once('.').ok_or_else(invalid)?;
-    if payload.is_empty() || !app.keys.verify("access-token", payload, sig) {
-        return Err(invalid());
-    }
-    let cl: Claims = URL_SAFE_NO_PAD
-        .decode(payload)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
+    let cl = obx_auth::AccessToken::verify(&app.keys, tok, chrono::Utc::now().timestamp())
         .ok_or_else(invalid)?;
-    if cl.e < chrono::Utc::now().timestamp() {
-        return Err(invalid());
-    }
-    let client = load_client(c, "id = ?", &cl.c)?;
+    let client = load_client(c, "id = ?", &cl.client)?;
     let Some(client) = client.filter(|x| x.status == "active") else {
         return Err(Problem::new("access_revoked", "This API key was revoked."));
     };
-    if client.version != cl.v {
+    if client.version != cl.version {
         return Err(Problem::new(
             "invalid_token",
             "The access token was issued before the client secret was rotated; request a new token.",
         ));
     }
-    let scopes: Vec<String> = cl.s.split_whitespace().map(String::from).collect();
-    viewer_for_client(c, Some(client), &scopes)
+    viewer_for_client(c, Some(client), &cl.scopes)
 }
 
 /// A viewer from a signed-URL tag: `a` (admin), `c.<client>` or `u.<user>`.
@@ -864,13 +805,19 @@ pub async fn rendition(
     method: Method,
 ) -> Res {
     let path = format!("/obx/v1/assets/{id}/renditions/{name}");
+    let mut max_age = 3600;
     let (v, hs) = if bearer(&headers).is_none() && q.get("sig").is_some_and(|s| !s.is_empty()) {
-        let tag = app.verify_signed(&path, &q).ok_or_else(|| {
+        let ver = app.verify_signed(&path, &q).map_err(|e| {
             Problem::new(
                 "forbidden",
-                "This link has expired or does not match its signature; read the asset again for a fresh link.",
+                match e {
+                    obx_sign::VerifyError::Expired => "This link has expired; read the asset again for a fresh link.",
+                    obx_sign::VerifyError::Invalid => "This link does not match its signature; read the asset again for a fresh link.",
+                },
             )
         })?;
+        max_age = ver.max_age(chrono::Utc::now().timestamp(), 3600);
+        let tag = ver.viewer;
         let v = app.db.read(move |c| viewer_from_tag(c, &tag)).await?;
         let hs = if v.kind == "client" {
             rate_limit(&app, &format!("api:{}", v.client_row_id), 3000)?.to_vec()
@@ -905,7 +852,11 @@ pub async fn rendition(
     } else {
         rendition_filename(&rep.filename, &name)
     };
-    let r = serve_blob(
+    let logged = v.kind == "client"
+        && method == Method::GET
+        && !headers.contains_key(header::IF_NONE_MATCH)
+        && !crate::stats::is_continuation_range(&headers);
+    let mut r = serve_blob(
         &app,
         &headers,
         &method,
@@ -914,32 +865,30 @@ pub async fn rendition(
         &content_disposition("inline", &fname),
     )
     .await?;
+    // The bytes are cached no longer than the signed URL lives (spec PR #14).
+    if let Ok(v) = HeaderValue::from_str(&format!("private, max-age={max_age}")) {
+        r.headers_mut().insert(header::CACHE_CONTROL, v);
+    }
+    if logged {
+        crate::stats::record(
+            &app,
+            &v,
+            crate::stats::DownloadEvent {
+                kind: "api_rendition",
+                variant: name.clone(),
+                product_id: rep.product_id.clone(),
+                asset_id: rep.id.clone(),
+                files: 1,
+                bytes: rend.bytes,
+                ..Default::default()
+            },
+        )
+        .await;
+    }
     Ok(with_headers(r, &hs))
 }
 
-fn parse_range(h: &str, size: u64) -> Option<std::ops::Range<u64>> {
-    let spec = h.strip_prefix("bytes=")?;
-    if spec.contains(',') {
-        return None;
-    }
-    let (a, b) = spec.split_once('-')?;
-    let (start, end) = if a.is_empty() {
-        let n: u64 = b.parse().ok()?;
-        if n == 0 {
-            return None;
-        }
-        (size.saturating_sub(n), size)
-    } else {
-        let s: u64 = a.parse().ok()?;
-        let e: u64 = if b.is_empty() {
-            size
-        } else {
-            (b.parse::<u64>().ok()? + 1).min(size)
-        };
-        (s, e)
-    };
-    (start < end && start < size).then_some(start..end)
-}
+use obx_axum::parse_range;
 
 /// Serves a stored blob with ETag, Range and If-None-Match.
 pub async fn serve_blob(

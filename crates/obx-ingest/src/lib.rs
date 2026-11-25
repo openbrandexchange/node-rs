@@ -1,13 +1,11 @@
-//! The OBX canonical import format, vocabularies and GTINs: a port of the
-//! pure packages of node-go (`internal/importfmt` without xlsx.go,
-//! `internal/vocab`, `internal/gtin`).
+//! Getting catalog data into an Open Brand Exchange node: the canonical
+//! import format and resumable uploads, as pure functions without storage
+//! or HTTP (a port of node-go's `internal/importfmt`).
 //!
-//! * [`gtin`]: GTIN-14 normalisation and the GS1 check digit.
-//! * [`vocab`]: the four vocabularies of `spec/vocabularies/*.json`,
-//!   embedded and parsed once ([`vocab::parts`], [`vocab::materials`],
-//!   [`vocab::qualifiers`], [`vocab::care`]).
 //! * [`importfmt`]: CSV tables and header names, materials, care codes,
 //!   article data cells, image file names and zip entry checks.
+//! * [`upload`]: the part plan of a resumable multipart upload.
+//! * [`gtin`] and [`vocab`] are re-exported from `obx-types`.
 //!
 //! Conventions of the port:
 //!
@@ -25,9 +23,12 @@
 //!   `f64` is written as Go writes it (`100`, not `100.0`); use it for
 //!   measurements too.
 
-pub mod gtin;
+#![forbid(unsafe_code)]
+
 pub mod importfmt;
-pub mod vocab;
+pub mod upload;
+
+pub use obx_types::{gtin, vocab};
 
 mod error;
 

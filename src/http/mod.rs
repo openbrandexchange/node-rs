@@ -8,10 +8,8 @@ pub mod protocol;
 pub mod router;
 pub mod ui;
 
-use std::collections::HashMap;
-
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::http::HeaderMap;
+use axum::response::Response;
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::Value;
@@ -21,107 +19,13 @@ use crate::catalog::grant_id_for;
 use crate::problem::{Problem, Result};
 use crate::settings::Settings;
 
-pub const MAX_JSON_BODY: usize = 4 << 20;
-
-/// A JSON response with `Cache-Control: no-store`.
-pub fn json<T: Serialize>(status: u16, v: &T) -> Response {
-    let body = serde_json::to_vec(v).unwrap_or_default();
-    let mut r = (StatusCode::from_u16(status).unwrap_or(StatusCode::OK), body).into_response();
-    r.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-    r.headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    r
-}
-
-pub fn ok<T: Serialize>(v: &T) -> Response {
-    json(200, v)
-}
+#[allow(unused_imports)]
+pub use obx_axum::{
+    MAX_JSON_BODY, bearer, content_disposition, json, limit_param, ok, read_json, read_json_object,
+    with_headers,
+};
 
 pub type Res = std::result::Result<Response, Problem>;
-
-/// Parses a JSON body (application/json, merge-patch or any +json).
-pub fn read_json(headers: &HeaderMap, body: &[u8], limit: usize) -> Result<Value> {
-    if let Some(ct) = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-    {
-        let mt = ct
-            .split(';')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_ascii_lowercase();
-        if !mt.is_empty()
-            && mt != "application/json"
-            && mt != "application/merge-patch+json"
-            && !mt.ends_with("+json")
-        {
-            return Err(Problem::new(
-                "unsupported_media_type",
-                "Send application/json.",
-            ));
-        }
-    }
-    if body.len() > limit {
-        return Err(Problem::new(
-            "payload_too_large",
-            "The request body is too large.",
-        ));
-    }
-    if body.iter().all(|b| b.is_ascii_whitespace()) {
-        return Err(Problem::new("invalid_request", "A JSON body is required."));
-    }
-    serde_json::from_slice(body).map_err(|e| {
-        Problem::new(
-            "invalid_request",
-            format!("The body is not valid JSON: {e}"),
-        )
-    })
-}
-
-pub fn read_json_object(
-    headers: &HeaderMap,
-    body: &[u8],
-) -> Result<serde_json::Map<String, Value>> {
-    match read_json(headers, body, MAX_JSON_BODY)? {
-        Value::Object(m) => Ok(m),
-        _ => Err(Problem::new(
-            "invalid_request",
-            "The body must be a JSON object.",
-        )),
-    }
-}
-
-/// The `limit` query parameter: default, clamped to max; not an integer or
-/// below 1 is invalid_request.
-pub fn limit_param(q: &HashMap<String, String>, def: usize, max: usize) -> Result<usize> {
-    let Some(s) = q.get("limit") else {
-        return Ok(def);
-    };
-    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
-        let n: u128 = s.parse().unwrap_or(u128::MAX);
-        if n >= 1 {
-            return Ok((n.min(max as u128)) as usize);
-        }
-    }
-    Err(Problem::new(
-        "invalid_request",
-        format!("limit must be an integer of at least 1 (at most {max} is used)."),
-    )
-    .field("", "invalid_request", "limit"))
-}
-
-pub fn bearer(h: &HeaderMap) -> Option<String> {
-    let v = h.get(header::AUTHORIZATION)?.to_str().ok()?;
-    if v.len() > 7 && v[..7].eq_ignore_ascii_case("bearer ") {
-        Some(v[7..].trim().to_string())
-    } else {
-        None
-    }
-}
 
 pub fn client_ip(app: &App, headers: &HeaderMap, peer: Option<std::net::SocketAddr>) -> String {
     if app.cfg.trust_proxy {
@@ -152,18 +56,6 @@ pub fn rate_limit(
     }
 }
 
-pub fn with_headers(mut r: Response, hs: &[(String, String)]) -> Response {
-    for (k, v) in hs {
-        if let (Ok(k), Ok(v)) = (
-            axum::http::HeaderName::try_from(k.as_str()),
-            HeaderValue::from_str(v),
-        ) {
-            r.headers_mut().insert(k, v);
-        }
-    }
-    r
-}
-
 // ---- viewers -------------------------------------------------------------------
 
 /// Who reads the catalog: an API client, a retailer user or an admin.
@@ -177,7 +69,12 @@ pub struct Viewer {
     pub original_allowed: bool,
     pub scopes: Vec<String>,
     pub client_row_id: String,
+    pub client_name: String,
     pub user_id: String,
+    pub user_name: String,
+    /// The interface language of a signed-in user.
+    #[allow(dead_code)] // read by the portal downloads (next commit)
+    pub language: String,
 }
 
 impl Viewer {
@@ -187,6 +84,11 @@ impl Viewer {
             original_allowed: true,
             ..Default::default()
         }
+    }
+
+    /// A brand administrator looking at the portal (never counted in statistics).
+    pub fn preview(&self) -> bool {
+        self.kind == "admin"
     }
 
     pub fn tag(&self) -> String {
@@ -294,44 +196,4 @@ pub fn grant_scopes(s: &Settings, r: &RetailerRow) -> Vec<String> {
         .iter()
         .map(|v| v.as_str().unwrap().to_string())
         .collect()
-}
-
-/// `inline; filename="…"` (RFC 6266 with a UTF-8 variant when needed).
-pub fn content_disposition(kind: &str, name: &str) -> String {
-    let mut s: String = name
-        .replace('\\', "/")
-        .rsplit('/')
-        .next()
-        .unwrap_or("")
-        .chars()
-        .map(|c| {
-            if (c as u32) < 0x20 || c == '\x7f' || "\":*?<>|".contains(c) {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    s = s.trim().trim_start_matches('.').to_string();
-    if s.is_empty() {
-        s = "file".into();
-    }
-    if s.is_ascii() {
-        return format!("{kind}; filename=\"{s}\"");
-    }
-    let fallback: String = s
-        .chars()
-        .map(|c| if c.is_ascii() { c } else { '_' })
-        .collect();
-    let enc: String = s
-        .bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
-                (b as char).to_string()
-            } else {
-                format!("%{b:02X}")
-            }
-        })
-        .collect();
-    format!("{kind}; filename=\"{fallback}\"; filename*=UTF-8''{enc}")
 }

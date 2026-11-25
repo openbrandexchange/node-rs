@@ -1,0 +1,21 @@
+[package]
+name = "obx-axum"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["obx", "open-brand-exchange", "axum", "http"]
+categories = ["web-programming::http-server"]
+description = "Open Brand Exchange (OBX) HTTP helpers for axum: problem responses, OBX-Version and security headers, JSON bodies, limits, ranges, rate limits"
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+obx-types = { version = "0.1.0", path = "../obx-types", default-features = false, features = ["axum"] }
+axum = { version = "0.8", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }

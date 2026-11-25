@@ -17,6 +17,7 @@ mod safeurl;
 mod schemas;
 mod secure;
 mod settings;
+mod stats;
 mod store;
 mod uploads;
 
