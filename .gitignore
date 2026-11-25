@@ -6,3 +6,9 @@
 *.db-wal
 .env
 conformance-report.json
+e2e/node_modules/
+e2e/tmp/
+e2e/screenshots/
+e2e/test-results/
+e2e/playwright-report/
+conformance-rate-limit.json
