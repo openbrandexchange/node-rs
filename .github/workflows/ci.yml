@@ -84,7 +84,7 @@ jobs:
         run: docker build -t node-rs:ci .
       - name: Smoke test
         run: |
-          docker run -d --name n -p 8080:8080 -e OBX_PUBLIC_URL=http://localhost:8080 node-rs:ci
+          docker run -d --name node-rs-ci -p 8080:8080 -e OBX_PUBLIC_URL=http://localhost:8080 node-rs:ci
           for i in $(seq 1 50); do curl -fsS http://localhost:8080/healthz && break; sleep 0.2; done
           curl -fsS http://localhost:8080/admin/api/setup | grep -q '"required":true'
-          docker logs n 2>&1 | grep -q 'setup code'
+          docker logs node-rs-ci 2>&1 | grep -q 'setup code'
