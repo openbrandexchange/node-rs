@@ -5,6 +5,8 @@ pub mod admin;
 pub mod feed;
 pub mod ingest;
 pub mod people;
+pub mod portal;
+pub mod portal_downloads;
 pub mod protocol;
 pub mod router;
 pub mod ui;
@@ -74,7 +76,6 @@ pub struct Viewer {
     pub user_id: String,
     pub user_name: String,
     /// The interface language of a signed-in user.
-    #[allow(dead_code)] // read by the portal downloads (next commit)
     pub language: String,
 }
 

@@ -653,25 +653,34 @@ pub async fn logout(State(app): State<App>, method: Method, headers: HeaderMap) 
     Ok(r)
 }
 
+/// The public branding of the portal (login page, portal header).
+pub fn public_branding_value(c: &Connection, base: &str, setup_done: bool) -> Result<Value> {
+    let s = Settings::load(c)?;
+    let mut st = c.prepare("SELECT id, name FROM brands WHERE visible = 1 ORDER BY name")?;
+    let brands = st
+        .query_map([], |r| {
+            Ok(json!({"id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?}))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let langs = s.content_languages();
+    let logo = (!s.logo_sha.is_empty())
+        .then(|| format!("{base}/admin/api/public/logo?v={}", &s.logo_sha[..16]));
+    Ok(
+        json!({"name": s.display_name(), "logo_url": logo, "accent_color": s.branding.accent_color,
+        "welcome_text": s.branding.welcome_text, "languages": langs, "default_language": langs[0],
+        "access_requests_enabled": s.portal.access_requests_enabled, "setup_required": !setup_done, "brands": brands,
+        "portal_name": s.branding.portal_name, "favicon_url": crate::branding::favicon_url(base, &s),
+        "theme": s.branding.theme, "login": crate::branding::public_login(c, &s)?}),
+    )
+}
+
 pub async fn public_branding(State(app): State<App>, method: Method, headers: HeaderMap) -> Res {
     admin_guard(&app, &headers, &method, "setup").await?;
     let done = app.setup_done().await;
     let base = app.cfg.public_url.clone();
     let out = app
         .db
-        .read(move |c| {
-            let s = Settings::load(c)?;
-            let mut st = c.prepare("SELECT id, name FROM brands WHERE visible = 1 ORDER BY name")?;
-            let brands = st
-                .query_map([], |r| Ok(json!({"id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?})))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            let langs = s.content_languages();
-            let logo = (!s.logo_sha.is_empty()).then(|| format!("{base}/admin/api/public/logo?v={}", &s.logo_sha[..16]));
-            Ok(json!({"name": s.display_name(), "logo_url": logo, "accent_color": s.branding.accent_color,
-                "welcome_text": s.branding.welcome_text, "languages": langs, "default_language": langs[0],
-                "access_requests_enabled": s.portal.access_requests_enabled, "setup_required": !done, "brands": brands,
-                "portal_name": s.branding.portal_name, "favicon_url": null, "theme": s.branding.theme, "login": null}))
-        })
+        .read(move |c| public_branding_value(c, &base, done))
         .await?;
     Ok(ok(&out))
 }
@@ -692,7 +701,7 @@ pub async fn public_logo(State(app): State<App>, method: Method, headers: Header
 
 // ---- settings --------------------------------------------------------------------------
 
-fn settings_json(app: &App, s: &Settings) -> Value {
+pub fn settings_json(app: &App, s: &Settings) -> Value {
     let mut m = to_value(s);
     if let Some(o) = m.as_object_mut() {
         for k in ["logo_sha", "logo_type", "favicon_sha", "favicon_type"] {
@@ -704,7 +713,7 @@ fn settings_json(app: &App, s: &Settings) -> Value {
         (!s.logo_sha.is_empty())
             .then(|| format!("{base}/admin/api/public/logo?v={}", &s.logo_sha[..16]))
     );
-    m["branding"]["favicon_url"] = Value::Null;
+    m["branding"]["favicon_url"] = json!(crate::branding::favicon_url(base, s));
     m["node"] = json!({"public_url": base, "discovery_url": format!("{base}/.well-known/obx"), "software": crate::app::SOFTWARE,
         "version": crate::app::VERSION, "email_configured": app.mail.configured(), "renditions_server_generated": true,
         "max_upload_bytes": crate::app::MAX_UPLOAD_BYTES,
@@ -718,7 +727,11 @@ pub async fn settings_get(State(app): State<App>, method: Method, headers: Heade
     Ok(ok(&settings_json(&app, &s)))
 }
 
-fn apply_settings_patch(cur: &Settings, mut patch: Map<String, Value>) -> Result<Settings> {
+fn apply_settings_patch(
+    cur: &Settings,
+    mut patch: Map<String, Value>,
+    images: &std::collections::HashSet<String>,
+) -> Result<Settings> {
     patch.remove("node");
     if let Some(Value::Object(b)) = patch.get_mut("branding") {
         b.remove("logo_url");
@@ -726,11 +739,18 @@ fn apply_settings_patch(cur: &Settings, mut patch: Map<String, Value>) -> Result
     }
     let mut base = to_value(cur);
     crate::catalog::merge_patch(&mut base, &Value::Object(patch));
+    let look = obx_types::appearance::validate(&base["branding"], |id| images.contains(id));
+    if look.fatal {
+        return Err(look.problem);
+    }
     let mut next: Settings = serde_json::from_value(base)
         .map_err(|e| Problem::new("validation_failed", format!("Settings are not valid: {e}")))?;
     next.logo_sha = cur.logo_sha.clone();
     next.logo_type = cur.logo_type.clone();
+    next.favicon_sha = cur.favicon_sha.clone();
+    next.favicon_type = cur.favicon_type.clone();
     let mut p = Problem::new("validation_failed", "Please check the highlighted fields.");
+    p.errors.extend(look.errors);
     if next.company.name.trim().is_empty() {
         p = p.field("/company/name", "validation_failed", "required");
     }
@@ -900,7 +920,8 @@ pub async fn settings_patch(
     admin_guard(&app, &headers, &method, "admin").await?;
     let patch = read_json_object(&headers, &body)?;
     let cur = app.settings().await?;
-    let next = apply_settings_patch(&cur, patch)?;
+    let images = app.db.read(crate::branding::image_set).await?;
+    let next = apply_settings_patch(&cur, patch, &images)?;
     save_settings(&app, cur, next).await?;
     let s = app.settings().await?;
     Ok(ok(&settings_json(&app, &s)))
@@ -1606,7 +1627,7 @@ pub fn create_api_client(
     Ok((cl, secret))
 }
 
-fn client_with_secret(app: &App, c: &super::protocol::ApiClient, secret: &str) -> Value {
+pub fn client_with_secret(app: &App, c: &super::protocol::ApiClient, secret: &str) -> Value {
     let base = &app.cfg.public_url;
     json!({"client": api_client_json(c), "client_secret": secret, "token_endpoint": format!("{base}/obx/v1/oauth/token"),
         "discovery_url": format!("{base}/.well-known/obx")})
@@ -2413,37 +2434,6 @@ pub async fn me_patch(
             )?;
             let u = load_user(tx, "id = ?", &u.id)?.unwrap();
             session_json(tx, Some(&u), &csrf, false)
-        })
-        .await?;
-    Ok(ok(&out))
-}
-
-/// GET /admin/api/portal/viewer: who is looking at the portal and what
-/// they see (the retailer portal itself is on the roadmap).
-pub async fn portal_viewer(State(app): State<App>, method: Method, headers: HeaderMap) -> Res {
-    let s = admin_guard(&app, &headers, &method, "any")
-        .await?
-        .expect("session");
-    let base = app.cfg.public_url.clone();
-    let out = app
-        .db
-        .read(move |c| {
-            let v = viewer_for_user(c, &s.user)?;
-            let (bf, args) = v.brand_filter("id");
-            let mut st = c.prepare(&format!("SELECT rep, updated_at FROM brands WHERE visible = 1{bf} ORDER BY name"))?;
-            let brands = st
-                .query_map(rusqlite::params_from_iter(args.iter()), |r| {
-                    Ok(super::protocol::render_plain(&r.get::<_, String>(0)?, &r.get::<_, String>(1)?))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            let st = Settings::load(c)?;
-            let retailer = (!v.retailer_id.is_empty()).then(|| json!({"id": v.retailer_id, "name": v.retailer_name}));
-            let logo = (!st.logo_sha.is_empty()).then(|| format!("{base}/admin/api/public/logo?v={}", &st.logo_sha[..16]));
-            Ok(json!({"preview": v.kind == "admin", "retailer": retailer, "brands": brands,
-                "original_allowed": v.original_allowed, "article_data_export": st.portal.allow_article_data_export,
-                "api_self_service": st.portal.retailer_api_self_service, "selection_count": 0,
-                "branding": {"name": st.display_name(), "logo_url": logo, "accent_color": st.branding.accent_color,
-                    "welcome_text": st.branding.welcome_text, "languages": st.content_languages()}}))
         })
         .await?;
     Ok(ok(&out))

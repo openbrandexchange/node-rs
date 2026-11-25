@@ -384,7 +384,89 @@ pub fn router(app: App) -> Router {
             "/admin/api/me",
             axum::routing::patch(admin::me_patch).delete(super::people::me_delete),
         )
-        .route("/admin/api/portal/viewer", get(admin::portal_viewer))
+        // retailer portal
+        .route("/admin/api/portal/viewer", get(super::portal::viewer))
+        .route("/admin/api/portal/products", get(super::portal::products))
+        .route("/admin/api/portal/facets", get(super::portal::facets))
+        .route(
+            "/admin/api/portal/products/data.csv",
+            get(super::portal_downloads::products_csv),
+        )
+        .route(
+            "/admin/api/portal/products/{id}",
+            get(super::portal::product),
+        )
+        .route(
+            "/admin/api/portal/products/{id}/download.zip",
+            get(super::portal_downloads::product_zip),
+        )
+        .route(
+            "/admin/api/portal/gtin-lookup",
+            post(super::portal::gtin_lookup),
+        )
+        .route(
+            "/admin/api/portal/selection",
+            get(super::portal::selection_get)
+                .put(super::portal::selection_put)
+                .delete(super::portal::selection_delete),
+        )
+        .route(
+            "/admin/api/portal/selection/download.zip",
+            get(super::portal_downloads::selection_zip),
+        )
+        .route(
+            "/admin/api/portal/selection/data.csv",
+            get(super::portal_downloads::selection_csv),
+        )
+        .route(
+            "/admin/api/portal/assets/{id}/download",
+            get(super::portal_downloads::asset_download),
+        )
+        .route(
+            "/admin/api/portal/download-jobs",
+            get(super::portal_downloads::jobs).post(super::portal_downloads::job_create),
+        )
+        .route(
+            "/admin/api/portal/download-jobs/{id}",
+            get(super::portal_downloads::job_get),
+        )
+        .route(
+            "/admin/api/portal/download-jobs/{id}/file",
+            get(super::portal_downloads::job_file),
+        )
+        .route(
+            "/admin/api/portal/api-clients",
+            get(super::portal::clients).post(super::portal::client_create),
+        )
+        .route(
+            "/admin/api/portal/api-clients/{id}",
+            axum::routing::delete(super::portal::client_revoke),
+        )
+        .route(
+            "/admin/api/portal/api-clients/{id}/rotate",
+            post(super::portal::client_rotate),
+        )
+        // appearance
+        .route(
+            "/admin/api/public/favicon",
+            get(crate::branding::public_favicon),
+        )
+        .route(
+            "/admin/api/public/images/{id}",
+            get(crate::branding::public_image),
+        )
+        .route(
+            "/admin/api/settings/favicon",
+            put(crate::branding::favicon_put).delete(crate::branding::favicon_delete),
+        )
+        .route(
+            "/admin/api/settings/images",
+            get(crate::branding::images).post(crate::branding::image_upload),
+        )
+        .route(
+            "/admin/api/settings/images/{id}",
+            axum::routing::delete(crate::branding::image_delete),
+        )
         .route(
             "/admin/api/import-sources",
             get(admin::empty_list).post(admin::import_source_create),
