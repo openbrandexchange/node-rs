@@ -5,6 +5,7 @@ mod article;
 mod catalog;
 mod config;
 mod db;
+mod export_proto;
 mod exports;
 mod http;
 mod ids;
@@ -23,6 +24,7 @@ mod store;
 mod tests_exports_webhooks;
 mod uploads;
 mod usage;
+mod usage_proto;
 mod webhook_proto;
 mod webhooks;
 

@@ -6,7 +6,6 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use rusqlite::{OptionalExtension, params};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::app::App;
@@ -14,35 +13,7 @@ use crate::db;
 use crate::http::protocol::{protocol_auth, visible_asset};
 use crate::http::{Res, Viewer, json as json_resp, read_json_object, with_headers};
 use crate::problem::Problem;
-
-/// One reported event (UsageEvent; channel is accepted and not stored,
-/// like node-go).
-#[derive(Debug, Clone, Deserialize)]
-pub struct UsageEvent {
-    pub asset_id: String,
-    #[serde(default)]
-    pub rendition: Option<String>,
-    pub event: String,
-    #[serde(default)]
-    pub at: String,
-    #[serde(default)]
-    pub count: Option<i64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Usage {
-    #[serde(default)]
-    pub events: Vec<UsageEvent>,
-}
-
-/// The stored time of a reported event: its own time unless unparsable or
-/// more than an hour in the future.
-pub fn event_time(at: &str, now: chrono::DateTime<chrono::Utc>) -> String {
-    match db::parse_time(at) {
-        Some(t) if t < now + chrono::Duration::hours(1) => db::fmt_time(t),
-        _ => db::fmt_time(now),
-    }
-}
+use crate::usage_proto::{Usage, event_time};
 
 /// POST /obx/v1/usage
 pub async fn h_usage(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Res {
@@ -129,19 +100,4 @@ fn log_download_tmp(
         params![db::now_str(), v.retailer_id],
     )?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn event_times() {
-        let now = chrono::Utc::now();
-        assert_eq!(
-            super::event_time("2026-01-02T03:04:05Z", now),
-            "2026-01-02T03:04:05.000000Z"
-        );
-        assert_eq!(super::event_time("nonsense", now), crate::db::fmt_time(now));
-        let future = crate::db::fmt_time(now + chrono::Duration::hours(3));
-        assert_eq!(super::event_time(&future, now), crate::db::fmt_time(now));
-    }
 }

@@ -11,12 +11,12 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, Method, header};
 use axum::response::Response;
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::Digest;
 
 use crate::app::App;
 use crate::db;
+use crate::export_proto::*;
 use crate::http::protocol::{product_details, protocol_auth, rendition_filename, viewer_from_tag};
 use crate::http::{
     MAX_JSON_BODY, Res, Viewer, content_disposition, json as json_resp, ok, with_headers,
@@ -24,49 +24,6 @@ use crate::http::{
 use crate::jobs::Job;
 use crate::problem::{Problem, Result};
 use crate::store::blob_key;
-
-/// The largest zip part (protocol.md §9).
-pub const PART_MAX: u64 = 2 << 30;
-/// How long a finished export stays readable.
-const EXPORT_TTL_HOURS: i64 = 48;
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ExportFilter {
-    #[serde(default)]
-    pub brand_ids: Option<Vec<String>>,
-    #[serde(default)]
-    pub product_ids: Option<Vec<String>>,
-    #[serde(default)]
-    pub gtins: Option<Vec<String>>,
-    #[serde(default)]
-    pub updated_since: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ExportRequest {
-    #[serde(default)]
-    pub filter: ExportFilter,
-    #[serde(default)]
-    pub renditions: Vec<String>,
-    #[serde(default)]
-    pub include_data: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ExportPart {
-    pub number: usize,
-    pub bytes: u64,
-    pub sha256: String,
-    pub files: usize,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ExportResult {
-    #[serde(default)]
-    pub parts: Vec<ExportPart>,
-    #[serde(default)]
-    pub cursor: String,
-}
 
 fn expired(j: &Job) -> bool {
     j.expires_at
@@ -291,7 +248,7 @@ pub async fn h_manifest(
     let path = format!("/obx/v1/exports/{id}/manifest");
     let (_, j, hs) = export_viewer(&app, &headers, &path, &q, &id, "catalog:read").await?;
     ready(&j)?;
-    let key = format!("exports/{}/manifest.ndjson", j.id);
+    let key = manifest_key(&j.id);
     let r = serve_object(
         &app,
         &headers,
@@ -326,8 +283,8 @@ pub async fn h_part(
         return Err(Problem::new("not_found", "Part not found."));
     }
     let part = res.parts[num - 1].clone();
-    let key = format!("exports/{}/part-{num}.zip", j.id);
-    let disp = content_disposition("attachment", &format!("obx-export-{}-part-{num}.zip", j.id));
+    let key = part_key(&j.id, num);
+    let disp = content_disposition("attachment", &part_filename(&j.id, num));
     let r = serve_object(
         &app,
         &headers,
@@ -487,31 +444,6 @@ pub async fn serve_object(
 }
 
 // ---- the job ---------------------------------------------------------------------------
-
-/// Makes a style number usable as a zip folder name.
-pub fn safe_zip_segment(s: &str) -> String {
-    let s = s.replace(['/', '\\'], "_").replace("..", "_");
-    sanitize_filename(&s)
-}
-
-/// node-go sanitizeFilename: the last path segment without control and
-/// reserved characters, no leading dots, never empty.
-pub fn sanitize_filename(s: &str) -> String {
-    let s = s.replace('\\', "/");
-    let base = s.rsplit('/').next().unwrap_or("");
-    let out: String = base
-        .chars()
-        .map(|c| {
-            if (c as u32) < 0x20 || c == '\x7f' || "\":*?<>|".contains(c) {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    let out = out.trim().trim_start_matches('.').to_string();
-    if out.is_empty() { "file".into() } else { out }
-}
 
 /// One file written to a zip part.
 #[derive(Debug, Clone)]
@@ -799,11 +731,7 @@ async fn run(app: &App, j: &Job) -> std::result::Result<Value, String> {
                     } else {
                         rendition_filename(filename, rn)
                     };
-                    let path = format!(
-                        "{}/{rn}/{}",
-                        safe_zip_segment(&style),
-                        sanitize_filename(&name)
-                    );
+                    let path = entry_path(&style, rn, &name);
                     let data = app
                         .store
                         .get(&blob_key(&sha))
@@ -833,10 +761,7 @@ async fn run(app: &App, j: &Job) -> std::result::Result<Value, String> {
         manifest.push(b'\n');
     }
     app.store
-        .put(
-            &format!("exports/{}/manifest.ndjson", j.id),
-            Bytes::from(manifest),
-        )
+        .put(&manifest_key(&j.id), Bytes::from(manifest))
         .await?;
     let mut res = ExportResult {
         cursor,
@@ -844,10 +769,7 @@ async fn run(app: &App, j: &Job) -> std::result::Result<Value, String> {
     };
     for (i, (path, files)) in zp.parts.iter().enumerate() {
         let sha = file_sha256(path).await.map_err(|e| e.to_string())?;
-        let n = app
-            .store
-            .put_file(&format!("exports/{}/part-{}.zip", j.id, i + 1), path)
-            .await?;
+        let n = app.store.put_file(&part_key(&j.id, i + 1), path).await?;
         res.parts.push(ExportPart {
             number: i + 1,
             bytes: n,
@@ -950,15 +872,6 @@ mod tests {
         let dir = z.dir.clone();
         drop(z);
         assert!(!dir.exists());
-    }
-
-    #[test]
-    fn safe_segments() {
-        assert_eq!(safe_zip_segment("../a/b"), "__a_b");
-        assert_eq!(safe_zip_segment(".."), "_");
-        assert_eq!(sanitize_filename("x\\y/..z.jpg"), "z.jpg");
-        assert_eq!(sanitize_filename("a:b"), "a_b");
-        assert!(!safe_zip_segment("a/../../etc").contains('/'));
     }
 
     #[test]
