@@ -99,6 +99,8 @@ impl App {
         let (render_tx, mut render_rx) = mpsc::unbounded_channel::<String>();
         let k = keys.clone();
         let setup_code = cfg.setup_code.clone();
+        // Demo mode sets itself up; there is no setup wizard to unlock.
+        let demo = cfg.demo;
         let (node_id, print_code) = db
             .write(move |tx| {
                 let id = match db::get_meta(tx, "node_id")? {
@@ -114,7 +116,7 @@ impl App {
                     "DELETE FROM meta WHERE key IN ('upgrade_article_data', 'upgrade_terms')",
                     [],
                 )?;
-                if db::get_meta(tx, "setup_done")?.as_deref() == Some("1") {
+                if demo || db::get_meta(tx, "setup_done")?.as_deref() == Some("1") {
                     return Ok((id, None));
                 }
                 if let Some(code) = setup_code {

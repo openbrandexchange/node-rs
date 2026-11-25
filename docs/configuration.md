@@ -27,6 +27,11 @@ Environment variables, checked at start (`node-rs check-config` checks without s
 | `OBX_SHUTDOWN_DELAY` | `0` (0–60) | Seconds `/readyz` answers 503 after SIGTERM before the server stops accepting requests (for load balancers). Running requests always finish. |
 | `OBX_LOG_FORMAT`, `OBX_LOG_LEVEL` | `text` (`json` in Docker), `info` | Logs go to standard error. |
 | `OBX_ALLOW_PRIVATE_URLS` | `false` | Development only: allows http:// and private addresses for webhook and import URLs (link-local stays blocked). |
+| `OBX_DEMO` | `false` | Public demo mode ([demo.md](demo.md)). **Every reset deletes all data**: never on a real portal. |
+| `OBX_DEMO_RESET_MINUTES` | `60` (5–10080) | Demo mode: how often the demo is put back to the fixtures (only when a visitor changed something, else once a day). |
+| `OBX_DEMO_MAX_UPLOAD_BYTES` | `2097152` (65536–33554432) | Demo mode: the largest request body. |
+| `OBX_DEMO_TURNSTILE_SITE_KEY` | not set | Demo mode: Cloudflare Turnstile site key (public) for the sign-in buttons. |
+| `OBX_DEMO_TURNSTILE_SECRET` | not set | Demo mode: its secret key; without it there is no Turnstile check. Needs the site key. |
 | `OBX_TEST_RATE_LIMIT` | not set | Conformance testing only: a lower per-minute API limit. |
 
 `/healthz` answers `ok` while the process and database work; `/readyz` answers JSON (`status`, `version`, `schema_version`, `checks`) and 503 while shutting down or when the database or file store does not answer. Every response carries an `X-Request-Id` (a sane incoming one is kept); the audit log records it.

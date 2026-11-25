@@ -678,9 +678,18 @@ pub async fn public_branding(State(app): State<App>, method: Method, headers: He
     admin_guard(&app, &headers, &method, "setup").await?;
     let done = app.setup_done().await;
     let base = app.cfg.public_url.clone();
+    let a = app.clone();
     let out = app
         .db
-        .read(move |c| public_branding_value(c, &base, done))
+        .read(move |c| {
+            let mut v = public_branding_value(c, &base, done)?;
+            // Demo mode only (docs/demo.md): the UI shows the demo banner
+            // and the one-click sign-in buttons.
+            if a.cfg.demo {
+                v["x-obx-demo"] = crate::demo::info(&a, c)?;
+            }
+            Ok(v)
+        })
         .await?;
     Ok(ok(&out))
 }

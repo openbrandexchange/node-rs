@@ -8,6 +8,7 @@ mod branding;
 mod catalog;
 mod config;
 mod db;
+mod demo;
 mod export_proto;
 mod exports;
 mod http;
@@ -484,6 +485,7 @@ async fn main() -> ExitCode {
             jobs::start_workers(a.clone());
             ops::start(a.clone());
             webhooks::start(a.clone());
+            demo::start(a.clone());
             let listener = match tokio::net::TcpListener::bind(SocketAddr::new(bind, port)).await {
                 Ok(l) => l,
                 Err(e) => {
