@@ -188,87 +188,93 @@ pub fn check_literal(u: &url::Url, allow_private: bool) -> Result<(), &'static s
     }
 }
 
-/// A DNS resolver for outbound HTTP that refuses names resolving to a
-/// private, loopback or link-local address, so a redirect or a DNS change
-/// between the check and the connection cannot reach one (DNS rebinding).
-#[derive(Debug, Clone, Copy)]
-pub struct SafeResolver {
-    pub allow_private: bool,
+/// A resolver that refuses host names resolving to an unsafe address. The
+/// HTTP client connects only to the addresses it returns, so a name cannot
+/// pass `check` and then resolve to a private address at connect time
+/// (DNS rebinding).
+struct SafeResolver {
+    allow_private: bool,
 }
-
-/// The error of a refused address: callers map it to unsafe_url.
-#[derive(Debug)]
-pub struct UnsafeAddress(pub String);
-
-impl std::fmt::Display for UnsafeAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unsafe address: {}", self.0)
-    }
-}
-
-impl std::error::Error for UnsafeAddress {}
 
 impl reqwest::dns::Resolve for SafeResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
-        let allow = self.allow_private;
+        let allow_private = self.allow_private;
         let host = name.as_str().to_string();
         Box::pin(async move {
-            let lower = host.trim_end_matches('.').to_lowercase();
-            if !allow && local_name(&lower) {
-                return Err(
-                    Box::new(UnsafeAddress(host)) as Box<dyn std::error::Error + Send + Sync>
-                );
+            if !allow_private && local_name(&host.trim_end_matches('.').to_lowercase()) {
+                return Err(Box::new(Refused) as Box<dyn std::error::Error + Send + Sync>);
             }
-            let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((lower.as_str(), 0))
-                .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?
-                .collect();
-            if addrs.iter().any(|a| ip_unsafe(a.ip(), allow)) {
-                return Err(
-                    Box::new(UnsafeAddress(host)) as Box<dyn std::error::Error + Send + Sync>
-                );
+            let addrs: Vec<std::net::SocketAddr> =
+                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            if addrs.is_empty() || addrs.iter().any(|a| ip_unsafe(a.ip(), allow_private)) {
+                return Err(Box::new(Refused) as Box<dyn std::error::Error + Send + Sync>);
             }
             Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
         })
     }
 }
 
-/// Whether a reqwest error was caused by the URL policy.
-pub fn is_unsafe_error(e: &reqwest::Error) -> bool {
-    let mut src: Option<&(dyn std::error::Error + 'static)> = Some(e);
-    while let Some(s) = src {
-        if s.is::<UnsafeAddress>() || s.to_string().starts_with("unsafe address") {
+/// The error of a connection refused by the URL policy.
+#[derive(Debug)]
+pub struct Refused;
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("refused: the URL resolves to a private address")
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// True when err (or its source chain) is a policy refusal.
+pub fn is_refused(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut e: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(x) = e {
+        if x.is::<Refused>() {
             return true;
         }
-        src = s.source();
+        e = x.source();
     }
     false
 }
 
-/// An HTTP client for outbound requests under the URL policy: names are
-/// resolved by [`SafeResolver`], every redirect target is checked, at most
-/// `max_redirects` redirects are followed, and no proxy from the
-/// environment is used.
-pub fn client(
+/// An outbound HTTP client under the URL policy: no redirects, a timeout,
+/// and every resolved address checked when connecting. IP-literal URLs
+/// bypass the resolver, so callers run `check` on the URL first.
+pub fn client(allow_private: bool, timeout: std::time::Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout)
+        .connect_timeout(timeout.min(std::time::Duration::from_secs(10)))
+        .dns_resolver(std::sync::Arc::new(SafeResolver { allow_private }))
+        .user_agent(format!("{}/{}", crate::app::SOFTWARE, crate::app::VERSION))
+        .build()
+        .expect("http client")
+}
+
+/// Like [`client`], but follows at most `max_redirects` redirects, each
+/// target checked by [`check_literal`] (names are checked again when they
+/// resolve). No proxy from the environment is used.
+pub fn client_with_redirects(
     allow_private: bool,
     timeout: std::time::Duration,
     max_redirects: usize,
 ) -> reqwest::Client {
     let policy = reqwest::redirect::Policy::custom(move |a| {
         if a.previous().len() >= max_redirects {
-            return a.error(UnsafeAddress("too many redirects".into()));
+            return a.error(Refused);
         }
         match check_literal(a.url(), allow_private) {
             Ok(()) => a.follow(),
-            Err(why) => a.error(UnsafeAddress(why.into())),
+            Err(_) => a.error(Refused),
         }
     });
     reqwest::Client::builder()
-        .dns_resolver(std::sync::Arc::new(SafeResolver { allow_private }))
         .redirect(policy)
         .no_proxy()
         .timeout(timeout)
-        .connect_timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(timeout.min(std::time::Duration::from_secs(15)))
+        .dns_resolver(std::sync::Arc::new(SafeResolver { allow_private }))
         .user_agent(format!("{}/{}", crate::app::SOFTWARE, crate::app::VERSION))
         .build()
         .expect("http client")

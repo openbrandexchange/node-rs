@@ -3291,28 +3291,7 @@ mod tests {
     async fn test_app() -> (App, PathBuf) {
         let dir = std::env::temp_dir().join(format!("obx-import-test-{}", crate::ids::new("t")));
         std::fs::create_dir_all(&dir).unwrap();
-        let cfg = crate::config::Config {
-            public_url: "http://localhost:8080".into(),
-            port: 8080,
-            bind: std::net::IpAddr::from([127, 0, 0, 1]),
-            data_dir: dir.clone(),
-            database_url: format!("sqlite:{}", dir.join("obx.db").display()),
-            blob_url: format!("file://{}", dir.join("blobs").display()),
-            s3_access_key_id: None,
-            s3_secret_access_key: None,
-            secret_key: b"test-secret-key-0123456789abcdef0123".to_vec(),
-            setup_code: Some("TEST-CODE".into()),
-            allow_private_urls: true,
-            trust_proxy: false,
-            workers: 1,
-            change_retention_days: 400,
-            job_retention_days: 30,
-            mail_from: "no-reply@example.test".into(),
-            mail_log_bodies: false,
-            log_format: "text".into(),
-            log_level: "info".into(),
-            test_rate_limit: None,
-        };
+        let cfg = crate::config::Config::for_test(&dir);
         (App::new(cfg).await.unwrap(), dir)
     }
 

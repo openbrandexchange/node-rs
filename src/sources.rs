@@ -894,7 +894,7 @@ impl Https {
         let u = crate::safeurl::check(raw, allow)
             .await
             .map_err(FetchError::from_problem)?;
-        let client = crate::safeurl::client(allow, Duration::from_secs(600), 5);
+        let client = crate::safeurl::client_with_redirects(allow, Duration::from_secs(600), 5);
         let mut req = client.get(u);
         if let Some(h) = &self.creds.headers {
             for (k, v) in h {
@@ -902,7 +902,7 @@ impl Https {
             }
         }
         let mut resp = req.send().await.map_err(|e| FetchError {
-            unsafe_url: crate::safeurl::is_unsafe_error(&e),
+            unsafe_url: crate::safeurl::is_refused(&e),
             msg: format!("download failed: {}", scrub(&e)),
         })?;
         if resp.status() != reqwest::StatusCode::OK {
@@ -1198,7 +1198,7 @@ impl object_store::client::HttpConnector for SafeConnector {
         _: &object_store::ClientOptions,
     ) -> object_store::Result<object_store::client::HttpClient> {
         Ok(object_store::client::HttpClient::new(
-            crate::safeurl::client(self.allow_private, Duration::from_secs(600), 0),
+            crate::safeurl::client(self.allow_private, Duration::from_secs(600)),
         ))
     }
 }

@@ -12,6 +12,11 @@ use crate::problem::Problem;
 #[folder = "ui/dist/"]
 struct Dist;
 
+/// A file of the bundled admin-ui build (for example `locales/nl.json`).
+pub fn dist_file(name: &str) -> Option<std::borrow::Cow<'static, [u8]>> {
+    Dist::get(name).map(|f| f.data)
+}
+
 fn file(name: &str, cache: &str) -> Option<Response> {
     let f = Dist::get(name)?;
     let mime = mime_guess::from_path(name).first_or_octet_stream();

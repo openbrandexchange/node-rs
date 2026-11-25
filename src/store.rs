@@ -145,8 +145,45 @@ impl Store {
         Ok(total)
     }
 
+    /// A stored object as a stream of chunks.
+    pub async fn get_stream(
+        &self,
+        key: &str,
+    ) -> Result<Option<futures::stream::BoxStream<'static, Result<Bytes, std::io::Error>>>, String>
+    {
+        use futures::StreamExt;
+        match self.inner.get(&self.path(key)).await {
+            Ok(r) => Ok(Some(
+                r.into_stream()
+                    .map(|c| c.map_err(std::io::Error::other))
+                    .boxed(),
+            )),
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     pub async fn exists(&self, key: &str) -> bool {
         self.inner.head(&self.path(key)).await.is_ok()
+    }
+
+    /// Deletes every object under a key prefix (an export's files).
+    pub async fn delete_prefix(&self, prefix: &str) -> Result<(), String> {
+        use futures::TryStreamExt;
+        let base = self.path(prefix.trim_end_matches('/'));
+        let metas: Vec<_> = self
+            .inner
+            .list(Some(&base))
+            .try_collect()
+            .await
+            .map_err(|e| e.to_string())?;
+        for m in metas {
+            match self.inner.delete(&m.location).await {
+                Ok(()) | Err(object_store::Error::NotFound { .. }) => {}
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        Ok(())
     }
 
     pub async fn delete(&self, key: &str) -> Result<(), String> {
@@ -154,5 +191,13 @@ impl Store {
             .delete(&self.path(key))
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// Whether the store answers (readiness probe): a missing key is fine.
+    pub async fn check(&self) -> Result<(), String> {
+        match self.inner.head(&self.path("readyz-probe")).await {
+            Ok(_) | Err(object_store::Error::NotFound { .. }) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     }
 }

@@ -47,6 +47,14 @@ pub struct Inner {
     limiter: obx_axum::RateLimiter,
     pub cursors: obx_auth::CursorCodec,
     pub signer: obx_sign::UrlSigner,
+    /// E-mail transport (SMTP or the log).
+    pub mail: crate::mail::Mailer,
+    /// Request counts and latencies for /metrics.
+    pub metrics: crate::metrics::Metrics,
+    /// Set on shutdown: /readyz answers 503 while running requests finish.
+    pub draining: std::sync::atomic::AtomicBool,
+    /// Woken when webhook deliveries are queued.
+    pub webhooks_due: Notify,
     rendering: Mutex<std::collections::HashSet<String>>,
 }
 
@@ -128,9 +136,13 @@ impl App {
             .map_err(|e| e.to_string())?;
         let cursors = obx_auth::CursorCodec::new(keys.clone(), node_id.clone());
         let signer = obx_sign::UrlSigner::new(keys.clone(), cfg.public_url.clone());
+        let mail = crate::mail::Mailer::new(&cfg);
         let app = App(Arc::new(Inner {
             cursors,
             signer,
+            mail,
+            metrics: crate::metrics::Metrics::new(),
+            draining: std::sync::atomic::AtomicBool::new(false),
             cfg,
             db,
             store,
@@ -140,6 +152,7 @@ impl App {
             changed: Notify::new(),
             jobs: Notify::new(),
             limiter: obx_axum::RateLimiter::new(),
+            webhooks_due: Notify::new(),
             rendering: Mutex::new(Default::default()),
         }));
         if let Some(code) = print_code {

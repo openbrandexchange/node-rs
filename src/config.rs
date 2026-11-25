@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use base64::Engine;
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // mail and job retention settings are read by roadmap features
 pub struct Config {
     pub public_url: String,
     pub port: u16,
@@ -24,8 +23,21 @@ pub struct Config {
     pub workers: usize,
     pub change_retention_days: i64,
     pub job_retention_days: i64,
+    pub webhook_log_retention_days: i64,
     pub mail_from: String,
     pub mail_log_bodies: bool,
+    /// `OBX_SMTP_URL`: smtp://user:pass@host:587 (STARTTLS) or smtps://...:465.
+    pub smtp_url: Option<String>,
+    /// `OBX_ACCESS_LOG`: one info line per request (default on).
+    pub access_log: bool,
+    /// `OBX_METRICS`: Prometheus metrics at /metrics (on when a token is set).
+    pub metrics: bool,
+    /// `OBX_METRICS_TOKEN`: bearer token required for /metrics.
+    pub metrics_token: Option<String>,
+    /// `OBX_SHUTDOWN_DELAY`: seconds /readyz answers 503 before the server stops.
+    pub shutdown_delay_secs: u64,
+    /// The secret key comes from `OBX_SECRET_KEY` (not the data folder).
+    pub secret_from_env: bool,
     pub log_format: String,
     pub log_level: String,
     /// Conformance testing only: lower the per-minute API limit.
@@ -46,6 +58,7 @@ const KNOWN: &[&str] = &[
     "OBX_SECRET_KEY",
     "OBX_SETUP_CODE",
     "OBX_ALLOW_PRIVATE_URLS",
+    "OBX_WEBHOOK_LOG_RETENTION_DAYS",
     "OBX_TRUST_PROXY",
     "OBX_WORKERS",
     "OBX_CHANGE_RETENTION_DAYS",
@@ -160,6 +173,8 @@ impl Config {
         let workers = env_int(&mut p, "OBX_WORKERS", 2, 1, 64) as usize;
         let change_retention_days = env_int(&mut p, "OBX_CHANGE_RETENTION_DAYS", 400, 90, 36500);
         let job_retention_days = env_int(&mut p, "OBX_JOB_RETENTION_DAYS", 30, 8, 36500);
+        let webhook_log_retention_days =
+            env_int(&mut p, "OBX_WEBHOOK_LOG_RETENTION_DAYS", 8, 1, 365);
         let allow_private_urls = env_bool(&mut p, "OBX_ALLOW_PRIVATE_URLS", false);
         let trust_proxy = env_bool(&mut p, "OBX_TRUST_PROXY", false);
         let mail_log_bodies = env_bool(&mut p, "OBX_MAIL_LOG_BODIES", false);
@@ -168,6 +183,28 @@ impl Config {
             .and_then(|u| u.host_str().map(String::from))
             .unwrap_or_default();
         let mail_from = env("OBX_MAIL_FROM").unwrap_or_else(|| format!("no-reply@{host}"));
+        let smtp_url = env("OBX_SMTP_URL");
+        if let Some(su) = &smtp_url {
+            match url::Url::parse(su) {
+                Ok(u) if (u.scheme() == "smtp" || u.scheme() == "smtps") && u.host_str().is_some_and(|h| !h.is_empty()) => {}
+                _ => p.push(format!(
+                    "OBX_SMTP_URL must look like smtp://user:password@host:587 or smtps://user:password@host:465 (got {:?})",
+                    redact(su)
+                )),
+            }
+        }
+        if env("OBX_MAIL_FROM").is_some() && !crate::http::admin::valid_email(&mail_from) {
+            p.push(format!(
+                "OBX_MAIL_FROM must be a plain e-mail address such as portal@yourbrand.com, got {mail_from:?}"
+            ));
+        }
+        let metrics_token = env("OBX_METRICS_TOKEN");
+        if metrics_token.as_ref().is_some_and(|t| t.len() < 16) {
+            p.push("OBX_METRICS_TOKEN must be at least 16 characters".into());
+        }
+        let metrics = env_bool(&mut p, "OBX_METRICS", metrics_token.is_some());
+        let access_log = env_bool(&mut p, "OBX_ACCESS_LOG", true);
+        let shutdown_delay_secs = env_int(&mut p, "OBX_SHUTDOWN_DELAY", 0, 0, 60) as u64;
         let test_rate_limit = env("OBX_TEST_RATE_LIMIT").and_then(|v| v.parse().ok());
         for (k, _) in std::env::vars() {
             if k.starts_with("OBX_") && !KNOWN.contains(&k.as_str()) {
@@ -201,12 +238,53 @@ impl Config {
             workers,
             change_retention_days,
             job_retention_days,
+            webhook_log_retention_days,
             mail_from,
             mail_log_bodies,
+            smtp_url,
+            access_log,
+            metrics,
+            metrics_token,
+            shutdown_delay_secs,
+            secret_from_env: env("OBX_SECRET_KEY").is_some(),
             log_format: env("OBX_LOG_FORMAT").unwrap_or_else(|| "text".into()),
             log_level: env("OBX_LOG_LEVEL").unwrap_or_else(|| "info".into()),
             test_rate_limit,
         })
+    }
+
+    /// A configuration for tests: data in dir, mail to the log.
+    #[cfg(test)]
+    pub fn for_test(dir: &std::path::Path) -> Config {
+        Config {
+            public_url: "http://localhost:8080".into(),
+            port: 8080,
+            bind: std::net::IpAddr::from([127, 0, 0, 1]),
+            data_dir: dir.to_path_buf(),
+            database_url: format!("sqlite:{}", dir.join("obx.db").display()),
+            blob_url: format!("file://{}", dir.join("blobs").display()),
+            s3_access_key_id: None,
+            s3_secret_access_key: None,
+            secret_key: b"test-secret-key-0123456789abcdef0123".to_vec(),
+            setup_code: Some("TEST-CODE".into()),
+            allow_private_urls: true,
+            trust_proxy: false,
+            workers: 1,
+            change_retention_days: 400,
+            job_retention_days: 30,
+            mail_from: "no-reply@example.test".into(),
+            mail_log_bodies: false,
+            smtp_url: None,
+            access_log: false,
+            metrics: true,
+            metrics_token: None,
+            webhook_log_retention_days: 8,
+            shutdown_delay_secs: 0,
+            secret_from_env: true,
+            log_format: "text".into(),
+            log_level: "info".into(),
+            test_rate_limit: None,
+        }
     }
 
     pub fn secure(&self) -> bool {

@@ -65,7 +65,10 @@ fn table_strategy() -> impl Strategy<Value = Vec<Vec<String>>> {
     header_strategy().prop_flat_map(|h| {
         let w = h.len();
         prop::collection::vec(
-            ("[A-Z0-9]{1,6}", prop::collection::vec("[a-zA-Z0-9 ,;\"\\n:é€-]{0,10}", w - 1)),
+            (
+                "[A-Z0-9]{1,6}",
+                prop::collection::vec("[a-zA-Z0-9 ,;\"\\n:é€-]{0,10}", w - 1),
+            ),
             1..8,
         )
         .prop_map(move |rows| {

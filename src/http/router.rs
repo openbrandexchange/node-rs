@@ -42,6 +42,96 @@ async fn headers_mw(State(app): State<App>, req: Request, next: Next) -> Respons
     r
 }
 
+/// Request id, access log and request metrics for every request.
+async fn observe_mw(State(app): State<App>, mut req: Request, next: Next) -> Response {
+    let start = std::time::Instant::now();
+    let id = req
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| {
+            (8..=128).contains(&v.len())
+                && v.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._:/=+-".contains(&b))
+        })
+        .map(String::from)
+        .unwrap_or_else(|| hex::encode(rand::random::<[u8; 12]>()));
+    req.extensions_mut()
+        .insert(crate::audit::RequestId(id.clone()));
+    let method = req.method().as_str().to_string();
+    let path = req.uri().path().to_string();
+    let mut r = next.run(req).await;
+    let route = crate::metrics::route_label(
+        r.extensions()
+            .get::<crate::metrics::RouteLabel>()
+            .map(|l| l.0.as_str()),
+    );
+    let status = r.status().as_u16();
+    let d = start.elapsed();
+    app.metrics.observe(&method, &route, status, d);
+    let quiet = matches!(path.as_str(), "/healthz" | "/readyz" | "/metrics");
+    let ms = d.as_secs_f64() * 1000.0;
+    if status >= 500 {
+        tracing::error!(request_id = %id, method, route, path, status, duration_ms = ms, "http");
+    } else if app.cfg.access_log && !quiet {
+        tracing::info!(request_id = %id, method, route, path, status, duration_ms = ms, "http");
+    } else {
+        tracing::debug!(request_id = %id, method, route, path, status, duration_ms = ms, "http");
+    }
+    if let Ok(v) = HeaderValue::from_str(&id) {
+        r.headers_mut().insert("x-request-id", v);
+    }
+    r
+}
+
+/// Route layer: the matched pattern travels to the outer layer.
+async fn route_label_mw(
+    matched: Option<axum::extract::MatchedPath>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let label = matched.map(|m| m.as_str().to_string());
+    let mut r = next.run(req).await;
+    if let Some(l) = label {
+        r.extensions_mut().insert(crate::metrics::RouteLabel(l));
+    }
+    r
+}
+
+/// The readiness probe: not shutting down, the database answers on the
+/// current schema and the file store is reachable.
+async fn readyz(State(app): State<App>) -> Response {
+    let mut ready = true;
+    let mut checks = serde_json::json!({"database": "ok", "files": "ok", "shutdown": "ok"});
+    if app.draining.load(std::sync::atomic::Ordering::SeqCst) {
+        checks["shutdown"] = "shutting down".into();
+        ready = false;
+    }
+    let v = app
+        .db
+        .read(|c| {
+            Ok(c.query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |r| r.get::<_, i64>(0),
+            )?)
+        })
+        .await;
+    if v.is_err() {
+        checks["database"] = "unavailable".into();
+        ready = false;
+    }
+    if app.store.check().await.is_err() {
+        checks["files"] = "unavailable".into();
+        ready = false;
+    }
+    super::json(
+        if ready { 200 } else { 503 },
+        &serde_json::json!({"status": if ready { "ready" } else { "not_ready" }, "version": crate::app::VERSION,
+            "schema_version": v.unwrap_or(0), "checks": checks}),
+    )
+}
+
 async fn healthz(State(app): State<App>) -> Response {
     match app
         .db
@@ -72,11 +162,9 @@ async fn method_not_allowed() -> Problem {
 }
 
 pub fn router(app: App) -> Router {
-    let ni = || any(protocol::not_implemented);
-
     Router::new()
         .route("/healthz", get(healthz))
-        .route("/readyz", get(healthz))
+        .route("/readyz", get(readyz))
         .route(
             "/.well-known/obx",
             get(protocol::discovery).options(discovery_options),
@@ -99,11 +187,45 @@ pub fn router(app: App) -> Router {
             "/obx/v1/assets/{id}/renditions/{name}",
             get(protocol::rendition),
         )
-        .route("/obx/v1/exports", ni())
-        .route("/obx/v1/exports/{*rest}", ni())
-        .route("/obx/v1/usage", ni())
-        .route("/obx/v1/webhooks", ni())
-        .route("/obx/v1/webhooks/{*rest}", ni())
+        // lane B: exports, usage, webhooks (protocol and brand)
+        .route("/obx/v1/exports", post(crate::exports::h_create))
+        .route("/obx/v1/exports/{id}", get(crate::exports::h_get))
+        .route(
+            "/obx/v1/exports/{id}/manifest",
+            get(crate::exports::h_manifest),
+        )
+        .route(
+            "/obx/v1/exports/{id}/parts/{n}",
+            get(crate::exports::h_part),
+        )
+        .route("/obx/v1/usage", post(crate::usage::h_usage))
+        .route(
+            "/obx/v1/webhooks",
+            get(crate::webhooks::h_list).post(crate::webhooks::h_create),
+        )
+        .route(
+            "/obx/v1/webhooks/{id}",
+            axum::routing::delete(crate::webhooks::h_delete),
+        )
+        .route("/obx/v1/webhooks/{id}/test", post(crate::webhooks::h_test))
+        .route(
+            "/admin/api/webhooks",
+            get(crate::webhooks::admin_list).post(crate::webhooks::admin_create),
+        )
+        .route(
+            "/admin/api/webhooks/{id}",
+            axum::routing::patch(crate::webhooks::admin_patch)
+                .delete(crate::webhooks::admin_delete),
+        )
+        .route(
+            "/admin/api/webhooks/{id}/test",
+            post(crate::webhooks::admin_test),
+        )
+        .route(
+            "/admin/api/webhooks/{id}/deliveries",
+            get(crate::webhooks::admin_deliveries),
+        )
+        // end lane B
         // Ingest API
         .route("/obx/v1/ingest", get(ingest::info))
         .route("/obx/v1/ingest/", get(ingest::info))
@@ -213,7 +335,9 @@ pub fn router(app: App) -> Router {
         )
         .route(
             "/admin/api/retailers/{id}",
-            get(admin::retailer_get).patch(admin::retailer_patch),
+            get(admin::retailer_get)
+                .patch(admin::retailer_patch)
+                .delete(super::people::retailer_delete),
         )
         .route("/admin/api/access-requests", get(admin::access_requests))
         .route(
@@ -256,7 +380,10 @@ pub fn router(app: App) -> Router {
         )
         .route("/admin/api/stats", get(crate::stats::h_stats))
         .route("/admin/api/stats/events", get(crate::stats::h_stats_events))
-        .route("/admin/api/me", axum::routing::patch(admin::me_patch))
+        .route(
+            "/admin/api/me",
+            axum::routing::patch(admin::me_patch).delete(super::people::me_delete),
+        )
         .route("/admin/api/portal/viewer", get(admin::portal_viewer))
         // lane C: scheduled imports
         .route(
@@ -277,17 +404,46 @@ pub fn router(app: App) -> Router {
             "/admin/api/import-sources/{id}/test",
             post(crate::sources::h_test),
         )
+        // lane A: e-mail, people, personal data, audit log, metrics
+        .route("/metrics", get(crate::metrics::handler))
+        .route("/admin/api/password/forgot", post(super::people::forgot))
+        .route("/admin/api/password/reset", post(super::people::reset))
         .route(
-            "/admin/api/webhooks",
-            get(admin::empty_list).post(admin::brand_webhook_create),
+            "/admin/api/users/{id}",
+            axum::routing::patch(super::people::user_patch).delete(super::people::user_delete),
         )
+        .route(
+            "/admin/api/users/{id}/resend-invite",
+            post(super::people::user_resend_invite),
+        )
+        .route(
+            "/admin/api/users/{id}/export",
+            get(super::people::user_export),
+        )
+        .route(
+            "/admin/api/retailers/{id}/export",
+            get(super::people::retailer_export),
+        )
+        .route("/admin/api/me/export", get(super::people::me_export))
+        .route(
+            "/admin/api/import-template.csv",
+            get(super::people::import_template),
+        )
+        .route("/admin/api/audit-log", get(crate::audit::h_list))
+        // end lane A
         .route("/obx/{*rest}", any(api_fallback))
         .route("/admin/api/{*rest}", any(api_fallback))
+        .route_layer(middleware::from_fn_with_state(
+            app.clone(),
+            crate::audit::middleware,
+        ))
+        .route_layer(middleware::from_fn(route_label_mw))
         .fallback(ui::serve)
         .method_not_allowed_fallback(method_not_allowed)
         .layer(axum::extract::DefaultBodyLimit::max(
             crate::app::MAX_IMPORT_BYTES as usize,
         ))
         .layer(middleware::from_fn_with_state(app.clone(), headers_mw))
+        .layer(middleware::from_fn_with_state(app.clone(), observe_mw))
         .with_state(app)
 }

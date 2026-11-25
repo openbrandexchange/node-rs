@@ -33,8 +33,12 @@ Linux or Docker, with Caddy for HTTPS: [docs/hosting.md](docs/hosting.md). Back 
 ```
 node-rs serve                                   start the portal (default)
 node-rs import --csv FILE [--assets FILE] [--images DIR|ZIP] [--package ZIP] [--mode mirror] [--dry-run]
-node-rs backup --to DIR                         consistent snapshot of database and secret key
+node-rs backup --to DIR                         consistent snapshot: database, local images, secret key
+node-rs restore --from DIR [--force]            put a node-rs or node-go backup in place (node stopped)
 node-rs admin create-ingest-token --name NAME   prints an automatic upload key
+node-rs admin reset-password --email E [--password-stdin]   one-time reset link, or set the password
+node-rs admin audit-log [--limit N]             latest audit log entries
+node-rs admin personal-data --email E | --retailer ID       everything stored about a person or company (JSON)
 node-rs admin rotate-client-secret --client-id ID
 node-rs admin simulate-spec-upgrade             expire every /changes cursor (410)
 node-rs check-config | healthcheck | version

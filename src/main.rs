@@ -4,16 +4,23 @@
 
 mod app;
 mod article;
+mod audit;
+mod backup;
 mod catalog;
 mod config;
 mod db;
+mod export_proto;
+mod exports;
 mod http;
 mod ids;
 mod imaging;
 mod imports;
 mod jobs;
+mod mail;
+mod metrics;
 mod migrations;
 mod model;
+mod ops;
 mod problem;
 mod safeurl;
 mod schemas;
@@ -22,7 +29,13 @@ mod settings;
 mod sources;
 mod stats;
 mod store;
+#[cfg(test)]
+mod tests_exports_webhooks;
 mod uploads;
+mod usage;
+mod usage_proto;
+mod webhook_proto;
+mod webhooks;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -45,10 +58,19 @@ struct Cli {
 enum Cmd {
     /// Start the portal (the default).
     Serve,
-    /// Write a consistent snapshot (database, secret key, settings) to DIR.
+    /// Write a consistent snapshot (database, local images, secret key) to a new, empty DIR.
     Backup {
         #[arg(long)]
         to: PathBuf,
+    },
+    /// Put a backup made with `node-rs backup` or `node-go backup` in place
+    /// (stop the node first).
+    Restore {
+        #[arg(long)]
+        from: PathBuf,
+        /// Replace an existing database.
+        #[arg(long)]
+        force: bool,
     },
     /// Import the canonical CSV format into this node's database.
     Import {
@@ -96,6 +118,27 @@ enum AdminCmd {
         #[arg(long)]
         name: String,
     },
+    /// Print a one-time password reset link, or set the password from stdin.
+    ResetPassword {
+        #[arg(long)]
+        email: String,
+        /// Read the new password from standard input.
+        #[arg(long)]
+        password_stdin: bool,
+    },
+    /// Print the latest audit log entries.
+    AuditLog {
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Print everything stored about an account (--email) or a retailer
+    /// (--retailer) as JSON.
+    PersonalData {
+        #[arg(long, default_value = "")]
+        email: String,
+        #[arg(long, default_value = "")]
+        retailer: String,
+    },
 }
 
 async fn admin_cmd(cmd: AdminCmd) -> ExitCode {
@@ -110,6 +153,7 @@ async fn admin_cmd(cmd: AdminCmd) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let public_url = cfg.public_url.clone();
     let cmd = match cmd {
         AdminCmd::OperatorHook { action } => {
             let mut input = String::new();
@@ -130,18 +174,18 @@ async fn admin_cmd(cmd: AdminCmd) -> ExitCode {
         }
         c => c,
     };
-    let out =
-        match cmd {
-            AdminCmd::OperatorHook { .. } => unreachable!(),
-            AdminCmd::SimulateSpecUpgrade => {
-                database
-                    .write(|tx| {
-                        http::feed::simulate_spec_upgrade(tx)?;
-                        Ok(serde_json::json!({"simulated": "true"}))
-                    })
-                    .await
-            }
-            AdminCmd::RotateClientSecret { client_id } => database
+    let out = match cmd {
+        AdminCmd::OperatorHook { .. } => unreachable!(),
+        AdminCmd::SimulateSpecUpgrade => {
+            database
+                .write(|tx| {
+                    http::feed::simulate_spec_upgrade(tx)?;
+                    Ok(serde_json::json!({"simulated": "true"}))
+                })
+                .await
+        }
+        AdminCmd::RotateClientSecret { client_id } => {
+            database
                 .write(move |tx| {
                     let c = http::protocol::load_client(tx, "client_id = ?", &client_id)?
                         .filter(|c| c.status == "active")
@@ -151,24 +195,133 @@ async fn admin_cmd(cmd: AdminCmd) -> ExitCode {
                                 format!("no active API key with client_id {client_id}"),
                             )
                         })?;
-                    Ok(serde_json::json!({"client_secret": http::admin::rotate_secret(tx, &c.id)?}))
+                    let secret = http::admin::rotate_secret(tx, &c.id)?;
+                    audit::write(
+                        tx,
+                        &audit::cli_entry("api-clients.rotate", "api-client", &c.id),
+                    )?;
+                    Ok(serde_json::json!({"client_secret": secret}))
                 })
-                .await,
-            AdminCmd::CreateIngestToken { name } => {
+                .await
+        }
+        AdminCmd::CreateIngestToken { name } => {
+            database
+                .write(move |tx| {
+                    let scopes = vec![
+                        "ingest:read".into(),
+                        "ingest:write".into(),
+                        "ingest:delete".into(),
+                    ];
+                    let (_, secret) =
+                        http::admin::create_ingest_token(tx, &name, scopes, None, None)?;
+                    audit::write(
+                        tx,
+                        &audit::cli_entry("ingest-tokens.create", "ingest-token", &name),
+                    )?;
+                    Ok(serde_json::json!({"secret": secret}))
+                })
+                .await
+        }
+        AdminCmd::ResetPassword {
+            email,
+            password_stdin,
+        } => {
+            if password_stdin {
+                let mut pw = String::new();
+                let _ = std::io::Read::read_to_string(
+                    &mut std::io::Read::take(std::io::stdin(), 1024),
+                    &mut pw,
+                );
+                let pw = pw.trim_end_matches(['\r', '\n']).to_string();
+                if let Some(reason) = secure::password_problem(&pw) {
+                    eprintln!("node-rs admin: {reason}");
+                    return ExitCode::FAILURE;
+                }
+                let hash = secure::hash_password(&pw);
                 database
-                    .write(move |tx| {
-                        let scopes = vec![
-                            "ingest:read".into(),
-                            "ingest:write".into(),
-                            "ingest:delete".into(),
-                        ];
-                        let (_, secret) =
-                            http::admin::create_ingest_token(tx, &name, scopes, None, None)?;
-                        Ok(serde_json::json!({"secret": secret}))
-                    })
-                    .await
+                        .write(move |tx| {
+                            http::people::set_password(tx, &email, &hash)?;
+                            audit::write(tx, &audit::cli_entry("password.set", "user", &email))?;
+                            Ok(serde_json::json!({"message": "Password changed; all sessions of this account were ended."}))
+                        })
+                        .await
+            } else {
+                database
+                        .write(move |tx| {
+                            let u = http::admin::load_user(tx, "email = ?", &http::admin::norm_email(&email))?
+                                .ok_or_else(|| problem::Problem::new("not_found", format!("No account with e-mail {email}.")))?;
+                            let token = secure::random_string(32);
+                            let exp = db::fmt_time(chrono::Utc::now() + chrono::Duration::hours(1));
+                            tx.execute(
+                                "UPDATE users SET reset_hash = ?, reset_expires_at = ? WHERE id = ?",
+                                rusqlite::params![secure::hash_token(&token), exp, u.id],
+                            )?;
+                            audit::write(tx, &audit::cli_entry("password.reset-link", "user", &email))?;
+                            Ok(serde_json::json!({"message": "Open this link within one hour to choose a new password (works once).",
+                                "url": format!("{public_url}/reset-password/{token}")}))
+                        })
+                        .await
             }
-        };
+        }
+        AdminCmd::AuditLog { limit } => {
+            let out = database.read_sync(|c| {
+                Ok(audit::rows(
+                    c,
+                    &format!("ORDER BY at DESC, id DESC LIMIT {}", limit.min(10000)),
+                    &[],
+                )?)
+            });
+            match out {
+                Ok(items) => {
+                    for it in items {
+                        let who = it["actor"]["email"]
+                            .as_str()
+                            .map(String::from)
+                            .unwrap_or_else(|| {
+                                it["actor"]["type"].as_str().unwrap_or("").to_string()
+                            });
+                        let tgt = it["target_id"]
+                            .as_str()
+                            .map(|t| format!(" {t}"))
+                            .unwrap_or_default();
+                        println!(
+                            "{}  {:<28} {who}{tgt} ({})",
+                            it["at"].as_str().unwrap_or(""),
+                            it["action"].as_str().unwrap_or(""),
+                            it["status"]
+                        );
+                    }
+                    return ExitCode::SUCCESS;
+                }
+                Err(e) => Err(e),
+            }
+        }
+        AdminCmd::PersonalData { email, retailer } => {
+            if email.is_empty() == retailer.is_empty() {
+                eprintln!("node-rs admin personal-data: pass either --email or --retailer");
+                return ExitCode::from(2);
+            }
+            let out = database
+                .write(move |tx| {
+                    let v = http::people::personal_data_cli(tx, &email, &retailer)?;
+                    let (tt, id) = if retailer.is_empty() {
+                        ("user", email)
+                    } else {
+                        ("retailer", retailer)
+                    };
+                    audit::write(tx, &audit::cli_entry("personal-data.export", tt, &id))?;
+                    Ok(v)
+                })
+                .await;
+            match out {
+                Ok(v) => {
+                    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+                    return ExitCode::SUCCESS;
+                }
+                Err(e) => Err(e),
+            }
+        }
+    };
     match out {
         Ok(v) => {
             println!("{v}");
@@ -239,13 +392,37 @@ async fn main() -> ExitCode {
                 Err(e) => return e,
             };
             init_logs(Some(&cfg));
-            match backup(&cfg, &to) {
-                Ok(()) => {
-                    println!("backup written to {}", to.display());
+            match backup::backup(&cfg, &to) {
+                Ok(m) => {
+                    println!(
+                        "backup written to {} (database, {}, secret key: {})",
+                        to.display(),
+                        m.files,
+                        m.secret_key
+                    );
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
                     eprintln!("node-rs backup: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Cmd::Restore { from, force } => {
+            let cfg = match load_config() {
+                Ok(c) => c,
+                Err(e) => return e,
+            };
+            match backup::restore(&cfg, &from, force) {
+                Ok(m) => {
+                    println!(
+                        "Restored the backup of {} (node {}). Start the node with: node-rs serve",
+                        m.created_at, m.node_id
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("node-rs restore: {e}");
                     ExitCode::FAILURE
                 }
             }
@@ -307,6 +484,8 @@ async fn main() -> ExitCode {
             };
             jobs::start_workers(a.clone());
             sources::start_scheduler(a.clone());
+            ops::start(a.clone());
+            webhooks::start(a.clone());
             let listener = match tokio::net::TcpListener::bind(SocketAddr::new(bind, port)).await {
                 Ok(l) => l,
                 Err(e) => {
@@ -315,16 +494,29 @@ async fn main() -> ExitCode {
                 }
             };
             tracing::info!(port, public_url = %a.cfg.public_url, "node-rs is listening");
+            let drain = a.clone();
             let app = http::router::router(a).into_make_service_with_connect_info::<SocketAddr>();
-            let shutdown = async {
+            let signal = async {
                 let _ = tokio::signal::ctrl_c().await;
             };
             #[cfg(unix)]
-            let shutdown = async {
+            let signal = async {
                 let mut term =
                     tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
                         .expect("signal");
-                tokio::select! { _ = shutdown => {}, _ = term.recv() => {} }
+                tokio::select! { _ = signal => {}, _ = term.recv() => {} }
+            };
+            // On a signal /readyz answers 503 at once; the server keeps
+            // serving OBX_SHUTDOWN_DELAY seconds so load balancers move away,
+            // then stops accepting and lets running requests finish.
+            let shutdown = async move {
+                signal.await;
+                drain
+                    .draining
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                let d = drain.cfg.shutdown_delay_secs;
+                tracing::info!(delay_secs = d, "shutting down");
+                tokio::time::sleep(std::time::Duration::from_secs(d)).await;
             };
             if let Err(e) = axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown)
@@ -336,35 +528,4 @@ async fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
     }
-}
-
-/// A consistent snapshot: the SQLite database through the online backup
-/// API, plus the secret key. Blobs are content-addressed and immutable, so
-/// copying the blob store (or bucket) after this command is consistent.
-fn backup(cfg: &config::Config, to: &std::path::Path) -> Result<(), String> {
-    std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
-    let dest = to.join("obx.db");
-    if dest.exists() {
-        return Err(format!(
-            "{} exists; back up into an empty directory",
-            dest.display()
-        ));
-    }
-    let db = db::Db::open(&cfg.sqlite_path())?;
-    db.backup_to(&dest)?;
-    let key = cfg.data_dir.join("secret.key");
-    if key.exists() {
-        std::fs::copy(&key, to.join("secret.key")).map_err(|e| e.to_string())?;
-    }
-    let manifest = serde_json::json!({
-        "software": app::SOFTWARE, "version": app::VERSION, "created_at": db::now_str(),
-        "schema_version": migrations::MIGRATIONS.len(), "blob_url": config::redact(&cfg.blob_url),
-        "secret_key_from_env": !key.exists(),
-    });
-    std::fs::write(
-        to.join("backup.json"),
-        serde_json::to_vec_pretty(&manifest).unwrap(),
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
 }
