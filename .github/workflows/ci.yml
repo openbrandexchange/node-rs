@@ -62,6 +62,8 @@ jobs:
         run: go install github.com/openbrandexchange/obx-go/cmd/obx-conformance@main
       - name: Conformance (all profiles)
         run: scripts/conformance.sh all
+      - name: Conformance (security, with the rate-limit test)
+        run: CONFORMANCE_ARGS=--rate-limit-test REPORT=conformance-rate-limit.json CONFORMANCE_PORT=18432 scripts/conformance.sh security
       - name: Report in the job summary
         if: always()
         run: |
