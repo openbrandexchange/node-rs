@@ -6,11 +6,13 @@
 mod article;
 mod csv;
 mod images;
+mod package;
 mod values;
 mod xlsx;
 
 pub use article::*;
 pub use csv::*;
 pub use images::*;
+pub use package::*;
 pub use values::*;
 pub use xlsx::*;

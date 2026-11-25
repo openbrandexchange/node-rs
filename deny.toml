@@ -1,0 +1,48 @@
+# cargo deny check: licences, advisories, bans and sources of every crate in
+# the workspace (CI job "deny"). node-rs is AGPL-3.0-only, the obx-*
+# library crates are Apache-2.0; every dependency must be under a licence
+# both can include.
+
+[graph]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # rsa: Marvin attack (timing side channel on RSA decryption,
+    # RUSTSEC-2023-0071); no fixed version exists. node-rs only signs with
+    # an RSA key (SFTP login with a brand's own RSA key) and never decrypts.
+    { id = "RUSTSEC-2023-0071", reason = "no fix released; node-rs never decrypts with RSA (SFTP client signatures only)" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "AGPL-3.0-only",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+    "OpenSSL",
+    "BSL-1.0",
+    "0BSD",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

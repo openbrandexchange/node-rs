@@ -2049,9 +2049,6 @@ fn apply_plan(st: &mut State_, w: &mut Writer, plan: &mut ProductPlan) -> Result
 
 // ---- inputs ----------------------------------------------------------------------------
 
-const MAX_ZIP_ENTRIES: usize = 100_000;
-const MAX_ZIP_UNCOMPRESSED: u64 = 10 * MAX_UPLOAD_BYTES * 3;
-
 use fmt::{is_other_spreadsheet_name as is_other_spreadsheet, is_workbook_name};
 
 /// products.csv or assets.csv of an import: CSV bytes, or an Excel workbook
@@ -2075,39 +2072,40 @@ fn temp_path(tag: &str) -> PathBuf {
 
 /// Reads a zip file on disk: products.csv/assets.csv (packages only) and
 /// images.
+/// The problem of a zip that cannot be read (texts as node-go's).
+fn zip_problem(e: fmt::ZipError) -> Problem {
+    match e {
+        fmt::ZipError::Unreadable(_) => {
+            Problem::new("import_invalid", "The file is not a readable zip file.")
+        }
+        fmt::ZipError::Unsafe(m) => {
+            Problem::new("import_invalid", format!("Unsafe zip entry: {m}"))
+        }
+        fmt::ZipError::TooManyEntries(n) => Problem::new(
+            "import_invalid",
+            format!("The zip has more than {n} entries."),
+        ),
+        fmt::ZipError::TooLarge(m) => Problem::new(
+            "import_invalid",
+            format!(
+                "The zip unpacks to more than {} bytes ({m}).",
+                fmt::PACKAGE_LIMITS.max_total_bytes
+            ),
+        ),
+    }
+}
+
 fn read_package(
     path: &PathBuf,
     is_package: bool,
 ) -> Result<(Option<TableIn>, Option<TableIn>, Vec<ImageSource>)> {
-    use std::io::Read;
     let f = std::fs::File::open(path).map_err(Problem::internal)?;
-    let mut z = zip::ZipArchive::new(f)
-        .map_err(|_| Problem::new("import_invalid", "The file is not a readable zip file."))?;
-    if z.len() > MAX_ZIP_ENTRIES {
-        return Err(Problem::new(
-            "import_invalid",
-            format!("The zip has more than {MAX_ZIP_ENTRIES} entries."),
-        ));
-    }
-    let mut total = 0u64;
-    let mut entries = Vec::new();
-    for i in 0..z.len() {
-        let e = z
-            .by_index_raw(i)
-            .map_err(|_| Problem::new("import_invalid", "The zip cannot be read."))?;
-        let name = e.name().to_string();
-        let symlink = e.is_symlink();
-        fmt::safe_entry(&name, symlink)
-            .map_err(|err| Problem::new("import_invalid", format!("Unsafe zip entry: {err}")))?;
-        total += e.size();
-        if total > MAX_ZIP_UNCOMPRESSED {
-            return Err(Problem::new(
-                "import_invalid",
-                format!("The zip unpacks to more than {MAX_ZIP_UNCOMPRESSED} bytes."),
-            ));
-        }
-        entries.push((i, name, e.is_dir()));
-    }
+    let mut z = fmt::ZipPackage::open(f, fmt::PACKAGE_LIMITS).map_err(zip_problem)?;
+    let entries: Vec<(usize, String, bool)> = z
+        .entries()
+        .iter()
+        .map(|e| (e.index, e.name.clone(), e.is_dir))
+        .collect();
     let mut csvs: Vec<(usize, String)> = Vec::new();
     let mut workbooks: Vec<(usize, String)> = Vec::new();
     let mut images = Vec::new();
@@ -2132,15 +2130,10 @@ fn read_package(
         }
     }
     let mut read = |i: usize, name: &str, limit: u64| -> Result<Vec<u8>> {
-        let mut e = z
-            .by_index(i)
-            .map_err(|_| Problem::new("import_invalid", format!("{name} cannot be read.")))?;
-        let mut b = Vec::new();
-        e.by_ref()
-            .take(limit)
-            .read_to_end(&mut b)
-            .map_err(|_| Problem::new("import_invalid", format!("{name} cannot be read.")))?;
-        Ok(b)
+        z.read(i, limit).map_err(|e| match e {
+            fmt::ZipError::TooLarge(m) => Problem::new("import_invalid", format!("{name}: {m}.")),
+            _ => Problem::new("import_invalid", format!("{name} cannot be read.")),
+        })
     };
     let (mut products, mut assets) = (None, None);
     let mut other = Vec::new();
@@ -2271,6 +2264,9 @@ async fn load_inputs(app: &App, p: &ImportPayload) -> Result<Inputs> {
     Ok(inp)
 }
 
+/// The error of [`open_image`] for an image above the upload limit.
+const TOO_LARGE: &str = "payload_too_large";
+
 async fn open_image(app: &App, src: &Source) -> std::result::Result<Bytes, String> {
     match src {
         Source::Blob { key } => app
@@ -2282,16 +2278,15 @@ async fn open_image(app: &App, src: &Source) -> std::result::Result<Bytes, Strin
         Source::Zip { path, index } => {
             let (path, index) = (path.clone(), *index);
             tokio::task::spawn_blocking(move || {
-                use std::io::Read;
                 let f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-                let mut z = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
-                let mut e = z.by_index(index).map_err(|e| e.to_string())?;
-                let mut b = Vec::new();
-                e.by_ref()
-                    .take(MAX_UPLOAD_BYTES + 1)
-                    .read_to_end(&mut b)
-                    .map_err(|e| e.to_string())?;
-                Ok(Bytes::from(b))
+                let mut z =
+                    fmt::ZipPackage::open(f, fmt::PACKAGE_LIMITS).map_err(|e| e.to_string())?;
+                // One byte over the upload limit, so the caller reports it.
+                match z.read(index, MAX_UPLOAD_BYTES + 1) {
+                    Ok(b) => Ok(Bytes::from(b)),
+                    Err(fmt::ZipError::TooLarge(_)) => Err(TOO_LARGE.to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
             })
             .await
             .map_err(|e| e.to_string())?
@@ -2356,6 +2351,18 @@ async fn prepare_images(app: &App, st: &mut State_, plan: &mut ProductPlan) {
         } else {
             let data = match open_image(app, &ip.src.src).await {
                 Ok(d) => d,
+                Err(e) if e == TOO_LARGE => {
+                    st.add(
+                        &base,
+                        0,
+                        "",
+                        "payload_too_large",
+                        "The file is larger than 104857600 bytes.",
+                        "",
+                        false,
+                    );
+                    continue;
+                }
                 Err(e) => {
                     st.add(
                         &base,

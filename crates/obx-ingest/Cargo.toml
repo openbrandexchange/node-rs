@@ -27,3 +27,6 @@ unicode-normalization = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 quick-xml = "0.38"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
