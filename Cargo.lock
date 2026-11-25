@@ -1634,10 +1634,12 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "csv",
+ "quick-xml",
  "regex",
  "serde",
  "serde_json",
  "unicode-normalization",
+ "zip",
 ]
 
 [[package]]

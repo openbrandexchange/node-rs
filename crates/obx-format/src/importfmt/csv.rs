@@ -61,7 +61,7 @@ static HEADER_RUN_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t\r\n-]
 
 /// The §1.1 normalisation of a name: trimmed, lowercase, each run of white
 /// space and '-' one '_'.
-fn header_name(h: &str) -> String {
+pub(crate) fn header_name(h: &str) -> String {
     HEADER_RUN_RE
         .replace_all(&trim_header(h).to_lowercase(), "_")
         .into_owned()

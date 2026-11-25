@@ -1,5 +1,7 @@
 //! node-rs: the Open Brand Exchange reference node.
 
+#![forbid(unsafe_code)]
+
 mod app;
 mod article;
 mod catalog;

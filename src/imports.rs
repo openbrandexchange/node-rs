@@ -2,8 +2,8 @@
 //! assets.csv and images, as a zip package or as separate parts, run as a
 //! job. Row and file problems are ImportRowError items of the job; they
 //! never fail the request. A port of node-go's imports.go and
-//! import_http.go (Excel workbooks and scheduled import sources are not
-//! ported yet).
+//! import_http.go. Excel workbooks (import-format.md §5) are converted to
+//! the same rows by `obx_format::importfmt::convert_workbook`.
 
 #![allow(
     clippy::result_large_err,
@@ -614,6 +614,9 @@ struct State_ {
     gtin_ext: HashMap<String, String>,
     gtin_row: HashMap<String, usize>,
     present: Present,
+    /// Row 1 of products.xlsx / assets.xlsx, keyed by the CSV file they
+    /// stand for (import-format.md §5.5).
+    workbooks: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -637,8 +640,18 @@ impl State_ {
         value: &str,
         warning: bool,
     ) {
+        let (mut file, mut row, mut detail) = (file.to_string(), row, detail.to_string());
+        if let Some(header) = self.workbooks.get(&file) {
+            // The rows of a workbook: Excel's row numbers and a locator (§5.5).
+            file = file.trim_end_matches(".csv").to_string() + ".xlsx";
+            if row > 0 {
+                row += 1;
+            }
+            detail = fmt::workbook_locator(header, row, col) + &detail;
+        }
+        let detail = detail.as_str();
         let mut e = ImportRowError {
-            file: file.into(),
+            file,
             severity: if warning { "warning" } else { "error" }.into(),
             obx_error: code.into(),
             detail: truncate(detail, 2000),
@@ -661,6 +674,78 @@ impl State_ {
         self.errors.push(e);
     }
 
+    /// Records a conversion error or warning of a workbook as it is.
+    fn add_issue(&mut self, c: &fmt::CellIssue) {
+        if c.severity == "warning" {
+            self.counts.warnings += 1;
+        } else {
+            self.counts.errors += 1;
+        }
+        self.errors.push(ImportRowError {
+            file: c.file.clone(),
+            severity: c.severity.clone(),
+            obx_error: c.obx_error.clone(),
+            detail: truncate(&c.detail, 2000),
+            row: (c.row > 0).then_some(c.row),
+            column: (!c.column.is_empty()).then(|| c.column.clone()),
+            value: c.value.as_deref().map(|v| truncate(v, 500)),
+        });
+    }
+
+    /// The name an import's products / assets file has in messages.
+    fn file_name(&self, csv_name: &str) -> String {
+        if self.workbooks.contains_key(csv_name) {
+            csv_name.trim_end_matches(".csv").to_string() + ".xlsx"
+        } else {
+            csv_name.to_string()
+        }
+    }
+
+    /// Parses products.csv or assets.csv (role products / assets), or
+    /// converts the workbook that stands for it (import-format.md §5). A
+    /// workbook that cannot be imported gives one ImportRowError with row
+    /// null and fails the import with that code.
+    fn load_table(&mut self, role: &str, input: &TableIn) -> Result<fmt::Table> {
+        let csv_name = format!("{role}.csv");
+        let data = match input {
+            TableIn::Csv(b) => {
+                return fmt::parse_csv(b)
+                    .map_err(|e| Problem::new("import_invalid", format!("{csv_name}: {e}")));
+            }
+            TableIn::Workbook(b) => b,
+        };
+        let file = fmt::workbook_file(role);
+        let mut refuse = |code: &str, detail: String| {
+            self.add_issue(&fmt::CellIssue {
+                file: file.clone(),
+                severity: "error".into(),
+                obx_error: code.into(),
+                detail: detail.clone(),
+                ..Default::default()
+            });
+            Problem::new(code, format!("{file}: {detail}"))
+        };
+        if data.len() as u64 > crate::app::MAX_IMPORT_BYTES {
+            return Err(refuse(
+                "payload_too_large",
+                format!(
+                    "the file is larger than {} bytes",
+                    crate::app::MAX_IMPORT_BYTES
+                ),
+            ));
+        }
+        let wb = match fmt::convert_workbook(data, role) {
+            Ok(wb) => wb,
+            Err(e) => return Err(refuse(e.code, e.detail)),
+        };
+        for c in wb.errors.iter().chain(&wb.warnings) {
+            self.add_issue(c);
+        }
+        self.workbooks.insert(csv_name, wb.rows[0].clone());
+        fmt::table_from_records(wb.rows)
+            .map_err(|e| Problem::new("import_invalid", format!("{file}: {e}")))
+    }
+
     fn count(&mut self, result: &str) {
         match result {
             "created" => self.counts.created += 1,
@@ -676,7 +761,10 @@ impl Importer {
         if !t.has("style_number") {
             return Err(Problem::new(
                 "import_invalid",
-                "products.csv needs a style_number column.",
+                format!(
+                    "{} needs a style_number column.",
+                    self.st.file_name("products.csv")
+                ),
             ));
         }
         for c in fmt::unknown_columns(&t.header, fmt::KNOWN_COLUMNS) {
@@ -1189,7 +1277,7 @@ impl Importer {
         if !t.has("file") {
             return Err(Problem::new(
                 "import_invalid",
-                "assets.csv needs a file column.",
+                format!("{} needs a file column.", self.st.file_name("assets.csv")),
             ));
         }
         for c in fmt::unknown_columns(&t.header, fmt::KNOWN_ASSET_COLUMNS) {
@@ -1946,27 +2034,19 @@ fn apply_plan(st: &mut State_, w: &mut Writer, plan: &mut ProductPlan) -> Result
 const MAX_ZIP_ENTRIES: usize = 100_000;
 const MAX_ZIP_UNCOMPRESSED: u64 = 10 * MAX_UPLOAD_BYTES * 3;
 
-fn is_workbook_name(n: &str) -> bool {
-    n.to_lowercase().ends_with(".xlsx")
-}
+use fmt::{is_other_spreadsheet_name as is_other_spreadsheet, is_workbook_name};
 
-fn is_other_spreadsheet(n: &str) -> bool {
-    let l = n.to_lowercase();
-    [".xls", ".xlsm", ".xlsb", ".ods", ".numbers"]
-        .iter()
-        .any(|e| l.ends_with(e))
-}
-
-fn workbook_unsupported(name: &str) -> Problem {
-    Problem::new(
-        "workbook_invalid",
-        format!("{name}: Excel import is not supported yet; save the sheet as CSV (UTF-8)."),
-    )
+/// products.csv or assets.csv of an import: CSV bytes, or an Excel workbook
+/// (import-format.md §5).
+#[derive(Debug, Clone)]
+enum TableIn {
+    Csv(Vec<u8>),
+    Workbook(Vec<u8>),
 }
 
 struct Inputs {
-    products: Option<Vec<u8>>,
-    assets: Option<Vec<u8>>,
+    products: Option<TableIn>,
+    assets: Option<TableIn>,
     images: Vec<ImageSource>,
     temp: Vec<PathBuf>,
 }
@@ -1980,7 +2060,7 @@ fn temp_path(tag: &str) -> PathBuf {
 fn read_package(
     path: &PathBuf,
     is_package: bool,
-) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>, Vec<ImageSource>)> {
+) -> Result<(Option<TableIn>, Option<TableIn>, Vec<ImageSource>)> {
     use std::io::Read;
     let f = std::fs::File::open(path).map_err(Problem::internal)?;
     let mut z = zip::ZipArchive::new(f)
@@ -2011,6 +2091,7 @@ fn read_package(
         entries.push((i, name, e.is_dir()));
     }
     let mut csvs: Vec<(usize, String)> = Vec::new();
+    let mut workbooks: Vec<(usize, String)> = Vec::new();
     let mut images = Vec::new();
     for (i, name, dir) in entries {
         if dir || fmt::ignored(&name) {
@@ -2021,7 +2102,7 @@ fn read_package(
         if lower.ends_with(".csv") && is_package {
             csvs.push((i, base));
         } else if (lower == "products.xlsx" || lower == "assets.xlsx") && is_package {
-            return Err(workbook_unsupported(&base));
+            workbooks.push((i, base));
         } else if fmt::is_image(&base) {
             images.push(ImageSource {
                 name: base,
@@ -2032,13 +2113,13 @@ fn read_package(
             });
         }
     }
-    let mut read = |i: usize, name: &str| -> Result<Vec<u8>> {
+    let mut read = |i: usize, name: &str, limit: u64| -> Result<Vec<u8>> {
         let mut e = z
             .by_index(i)
             .map_err(|_| Problem::new("import_invalid", format!("{name} cannot be read.")))?;
         let mut b = Vec::new();
         e.by_ref()
-            .take(256 << 20)
+            .take(limit)
             .read_to_end(&mut b)
             .map_err(|_| Problem::new("import_invalid", format!("{name} cannot be read.")))?;
         Ok(b)
@@ -2047,13 +2128,46 @@ fn read_package(
     let mut other = Vec::new();
     for (i, base) in &csvs {
         match base.to_lowercase().as_str() {
-            "products.csv" => products = Some(read(*i, base)?),
-            "assets.csv" => assets = Some(read(*i, base)?),
+            "products.csv" => products = Some(TableIn::Csv(read(*i, base, 256 << 20)?)),
+            "assets.csv" => assets = Some(TableIn::Csv(read(*i, base, 256 << 20)?)),
             _ => other.push((*i, base.clone())),
         }
     }
+    for (i, base) in &workbooks {
+        let name = base.to_lowercase();
+        let dst = if name == "products.xlsx" {
+            &mut products
+        } else {
+            &mut assets
+        };
+        match dst {
+            Some(TableIn::Workbook(_)) => {
+                return Err(Problem::new(
+                    "import_invalid",
+                    format!("The package has more than one {name}."),
+                ));
+            }
+            Some(TableIn::Csv(_)) => {
+                return Err(Problem::new(
+                    "import_invalid",
+                    format!(
+                        "The package has both {} and {name}; send one of them.",
+                        name.trim_end_matches(".xlsx").to_string() + ".csv"
+                    ),
+                ));
+            }
+            None => {}
+        }
+        // One byte over the limit, so the import reports payload_too_large.
+        *dst = Some(TableIn::Workbook(read(
+            *i,
+            base,
+            crate::app::MAX_IMPORT_BYTES + 1,
+        )?));
+    }
+    // The "only *.csv" fallback does not extend to workbooks (§5.1).
     if products.is_none() && other.len() == 1 {
-        products = Some(read(other[0].0, &other[0].1)?);
+        products = Some(TableIn::Csv(read(other[0].0, &other[0].1, 256 << 20)?));
     }
     Ok((products, assets, images))
 }
@@ -2077,10 +2191,12 @@ async fn load_inputs(app: &App, p: &ImportPayload) -> Result<Inputs> {
         };
         match f.field.as_str() {
             "csv" | "assets_csv" => {
-                if is_workbook_name(&f.name) {
-                    return Err(workbook_unsupported(&f.name));
-                }
                 let b = get().await?.to_vec();
+                let b = if is_workbook_name(&f.name) {
+                    TableIn::Workbook(b)
+                } else {
+                    TableIn::Csv(b)
+                };
                 if f.field == "csv" {
                     inp.products = Some(b);
                 } else {
@@ -2286,26 +2402,16 @@ async fn run(
 ) -> (State_, Option<Problem>) {
     let mut products_table = None;
     if let Some(b) = &inp.products {
-        match fmt::parse_csv(b) {
+        match im.st.load_table("products", b) {
             Ok(t) => products_table = Some(t),
-            Err(e) => {
-                return (
-                    im.st,
-                    Some(Problem::new("import_invalid", format!("products.csv: {e}"))),
-                );
-            }
+            Err(p) => return (im.st, Some(p)),
         }
     }
     let mut assets_table = None;
     if let Some(b) = &inp.assets {
-        match fmt::parse_csv(b) {
+        match im.st.load_table("assets", b) {
             Ok(t) => assets_table = Some(t),
-            Err(e) => {
-                return (
-                    im.st,
-                    Some(Problem::new("import_invalid", format!("assets.csv: {e}"))),
-                );
-            }
+            Err(p) => return (im.st, Some(p)),
         }
     }
     let images = inp.images;

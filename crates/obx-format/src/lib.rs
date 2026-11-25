@@ -25,6 +25,8 @@
 //!   `f64` is written as Go writes it (`100`, not `100.0`); use it for
 //!   measurements too.
 
+#![forbid(unsafe_code)]
+
 pub mod gtin;
 pub mod importfmt;
 pub mod vocab;
