@@ -14,7 +14,7 @@ node-rs uses node-go's database schema, data folder and `OBX_*` settings, so it 
 
 What carries over: catalog, images, retailers, users and passwords, sessions, API keys and upload keys (secrets stay valid), access requests and the change history (retailers' `/changes` cursors keep working). The first write to each object after the move stores it in node-rs's own JSON layout; that write produces one ordinary upsert in the change feed even when the content did not change.
 
-Not carried over: Litestream replication (use [backup.md](backup.md) instead), and node-go's built-in HTTPS (`OBX_TLS=auto`; use Caddy). Features still on the roadmap (exports, webhooks, statistics) keep their stored data and work again when they land.
+Not carried over: Litestream replication (use [backup.md](backup.md) instead), and node-go's built-in HTTPS (`OBX_TLS=auto`; use Caddy).
 
 ### node-go on PostgreSQL
 
@@ -41,4 +41,4 @@ These nodes have their own databases (SQLite/MySQL, Cloudflare D1/R2), so the ca
 3. Recreate retailers and their access in the admin, and send retailers' software its new API key (client id and secret). Their software restarts `/changes` without a cursor and gets a full snapshot.
 4. Move the domain: point the DNS record at the new server and set `OBX_PUBLIC_URL`.
 
-A direct import of node-php and node-ts data (retailers, users, keys) is on the [roadmap](../ROADMAP.md).
+A direct import of node-php and node-ts data (retailers, users, keys) is not planned unless the maintainer decides otherwise ([ROADMAP.md](../ROADMAP.md)).

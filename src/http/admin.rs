@@ -1013,6 +1013,7 @@ pub async fn catalog_product(
             "Read variants and assets through their product.",
         ));
     }
+    let app2 = app.clone();
     let out = app
         .db
         .read(move |c| {
@@ -1028,17 +1029,12 @@ pub async fn catalog_product(
             )?;
             let w = format!("WHERE product_id = ?{}", crate::catalog::ASSET_ORDER);
             let as_ = crate::catalog::load_rows(c, KIND_ASSET, &w, &[&p.id])?;
-            let mut rec = crate::catalog::record(c, &p, &s);
-            rec["variants"] = Value::Array(
-                vs.iter()
-                    .map(|v| crate::catalog::record(c, v, &s))
-                    .collect(),
-            );
-            rec["assets"] = Value::Array(
-                as_.iter()
-                    .map(|a| crate::catalog::record(c, a, &s))
-                    .collect(),
-            );
+            let variants: Vec<Value> = vs.iter().map(|v| crate::catalog::record(c, v, &s)).collect();
+            let assets: Vec<Value> = as_
+                .iter()
+                .map(|a| admin_asset_json(&app2, c, a, &s))
+                .collect::<Result<_>>()?;
+            let rec = json!({"record": crate::catalog::record(c, &p, &s), "variants": variants, "assets": assets});
             Ok(Some(rec))
         })
         .await?;
@@ -1222,13 +1218,90 @@ pub async fn catalog_put_blob(
 }
 
 /// An admin's own files (previews of unpublished images).
+/// sha256, bytes, content type, width, height.
+type BlobRow = (String, i64, String, Option<i64>, Option<i64>);
+
+/// An asset in the admin: its record and every file as a rendition with a
+/// signed admin URL (the most recent upload, also while it is pending).
+fn admin_asset_json(
+    app: &App,
+    c: &Connection,
+    row: &crate::catalog::Row,
+    s: &Settings,
+) -> Result<Value> {
+    let rec = crate::catalog::record(c, row, s);
+    let mut files: std::collections::BTreeMap<String, LiveFile> = row
+        .live_files
+        .as_deref()
+        .and_then(|f| serde_json::from_str(f).ok())
+        .unwrap_or_default();
+    let d: Value = serde_json::from_str(&row.data).unwrap_or(Value::Null);
+    if let Some(orig) = d["files"]["original"]["sha256"].as_str() {
+        let blob: Option<BlobRow> = c
+            .query_row(
+                "SELECT sha256, bytes, content_type, width, height FROM blobs WHERE sha256 = ?",
+                [orig],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()?;
+        if let Some((sha, bytes, ct, w, h)) = blob {
+            files.insert(
+                "original".into(),
+                LiveFile {
+                    sha256: sha,
+                    content_type: ct,
+                    width: w.unwrap_or(0),
+                    height: h.unwrap_or(0),
+                    bytes,
+                },
+            );
+            for n in DERIVED_RENDITIONS {
+                let r: Option<(String, i64, i64, i64)> = c
+                    .query_row(
+                        "SELECT sha256, width, height, bytes FROM renditions WHERE original_sha = ? AND name = ?",
+                        params![orig, n],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                    )
+                    .optional()?;
+                if let Some((sha, w, h, b)) = r {
+                    files.insert(
+                        n.into(),
+                        LiveFile {
+                            sha256: sha,
+                            content_type: "image/jpeg".into(),
+                            width: w,
+                            height: h,
+                            bytes: b,
+                        },
+                    );
+                }
+            }
+        }
+    }
+    let mut rends = Map::new();
+    for (n, f) in files {
+        let (u, exp) = app.signed_url(&format!("/admin/api/files/{}", f.sha256), "a");
+        rends.insert(
+            n.clone(),
+            json!({"name": n, "url": u, "url_expires_at": exp, "content_type": f.content_type,
+                "width": f.width.max(1), "height": f.height.max(1), "bytes": f.bytes.max(1), "sha256": f.sha256}),
+        );
+    }
+    Ok(json!({"record": rec, "renditions": rends}))
+}
+
 pub async fn admin_file(
     State(app): State<App>,
     Path(sha): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
     method: Method,
     headers: HeaderMap,
 ) -> Res {
-    admin_guard(&app, &headers, &method, "admin").await?;
+    let path = format!("/admin/api/files/{sha}");
+    let signed = app.verify_signed(&path, &q).is_ok_and(|v| v.viewer == "a");
+    if !signed {
+        admin_guard(&app, &headers, &method, "admin").await?;
+    }
     let Some(b) = app.get_blob(&sha).await? else {
         return Err(Problem::new("not_found", "File not found."));
     };

@@ -532,6 +532,13 @@ pub async fn h_run(
     body: Bytes,
 ) -> Res {
     admin_guard(&app, &headers, &method, "admin").await?;
+    if app.cfg.demo {
+        return Err(Problem::new(
+            "forbidden",
+            "Scheduled imports from other servers are switched off. This is not possible in the demo.",
+        )
+        .extension("x-obx-demo", serde_json::Value::Bool(true)));
+    }
     let s = load(&app, &id).await?;
     let b = if body.iter().all(|c| c.is_ascii_whitespace()) {
         Map::new()
@@ -715,6 +722,10 @@ pub async fn schedule_due(app: &App) {
 
 /// Runs `schedule_due` every 30 seconds.
 pub fn start_scheduler(app: App) {
+    // The demo never pulls from other servers (docs/demo.md).
+    if app.cfg.demo {
+        return;
+    }
     tokio::spawn(async move {
         loop {
             schedule_due(&app).await;

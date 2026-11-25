@@ -28,6 +28,7 @@ if [ -z "$NODE_RS" ]; then
   (cd "$ROOT" && cargo build --locked)
   NODE_RS="${CARGO_TARGET_DIR:-$ROOT/target}/debug/node-rs"
 fi
+NODE_RS="$(cd "$(dirname "$NODE_RS")" && pwd)/$(basename "$NODE_RS")"
 (cd "$FIXTURES" && zipdir "$TMP/images.zip" images)
 # A "nightly export" for the scheduled import: the same catalog with one renamed article.
 mkdir -p "$TMP/export"

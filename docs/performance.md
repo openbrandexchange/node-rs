@@ -7,7 +7,7 @@ NODE_RS_LOAD_TEST=1 cargo test load_test -- --nocapture                 # 10 000
 NODE_RS_LOAD_TEST=1 NODE_RS_LOAD_PRODUCTS=50000 cargo test --release load_test -- --nocapture
 ```
 
-CI runs it on every change and fails when a request's 95th percentile exceeds its budget: 300 ms for pages, 50 ms for a single EAN lookup, 800 ms for bulk EAN lookups and `/changes` pages of 500 entries. The budgets are generous for slow CI machines and still catch a missing index or an N+1 query, which are 10–100× slower.
+CI runs it (release build) on every change and fails when a request's 95th percentile exceeds its budget: 300 ms for pages, 50 ms for a single EAN lookup, 800 ms for bulk EAN lookups and `/changes` pages of 500 entries. The budgets are generous for slow CI machines and still catch a missing index or an N+1 query, which are 10–100× slower.
 
 A run of the debug build (the slowest configuration; dependencies optimised, node-rs itself not) on an 8-core development machine, November 2026:
 

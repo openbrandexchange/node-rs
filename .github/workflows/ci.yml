@@ -31,6 +31,29 @@ jobs:
       - name: Tests
         run: cargo test --workspace --locked
 
+  e2e:
+    # The bundled admin-ui in a headless browser: every flow, then axe (e2e/README.md).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
+      - name: Build node-rs
+        run: cargo build --locked
+      - name: Playwright
+        run: cd e2e && bun install --frozen-lockfile && bunx playwright install --with-deps chromium
+      - name: Browser walk-through with axe
+        run: NODE_RS=target/debug/node-rs e2e/run.sh
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e
+          path: |
+            e2e/test-results
+            e2e/screenshots
+            e2e/tmp/node.log
+
   load:
     # node-go's load test: 10,000 products, budgets per request (docs/performance.md).
     runs-on: ubuntu-latest
@@ -39,7 +62,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Load test
-        run: NODE_RS_LOAD_TEST=1 cargo test --locked load_test -- --nocapture
+        run: NODE_RS_LOAD_TEST=1 cargo test --release --locked load_test -- --nocapture
 
   crates:
     # The obx-* library crates must stay publishable on their own (they are

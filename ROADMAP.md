@@ -4,11 +4,11 @@ node-rs replaces node-go, node-php and node-ts as the single reference node of O
 
 ## Status (November 2026)
 
-**Conformance:** `scripts/conformance.sh all` (obx-conformance from obx-go `main`, spec 0.3.1): **CONFORMANT** for protocol, ingest, portal and security, with **every check passing**: STATUS_COUNTS. `CONFORMANCE_ARGS=--rate-limit-test scripts/conformance.sh security` also passes S-RATE-2. CI runs both on every change.
+**Conformance:** `scripts/conformance.sh all` (obx-conformance from obx-go `main`, spec 0.3.1): **CONFORMANT** for protocol, ingest, portal and security, with **every check passing**: 71 passed, 0 failed, 0 not applicable (protocol, ingest, portal and security, required and optional). `CONFORMANCE_ARGS=--rate-limit-test scripts/conformance.sh security` also passes S-RATE-2. CI runs both on every change.
 
 **node-go data folder:** node-rs runs on a node-go SQLite data folder as it is: same schema and migrations, blob layout, secret-key derivation, token, cursor and signed-URL formats, argon2id passwords, backups. `scripts/test-node-go-data.py` (CI job `node-go-data`) sets up node-go, imports the fixtures, then checks that node-rs accepts node-go's access token, client secret, `/changes` cursor and admin password and serves identical products. node-go on PostgreSQL moves with `node-rs import-postgres` ([docs/migrating.md](docs/migrating.md)).
 
-**Library crates:** the protocol logic is in storage- and framework-agnostic crates under `crates/` (Apache-2.0, `#![forbid(unsafe_code)]`, MSRV 1.88, docs and examples, `cargo publish --dry-run` in CI): `obx-types`, `obx-auth`, `obx-sign`, `obx-feed`, `obx-ingest`, `obx-axum`, `obx-client`, `obx-conformance`. They are **not published** on crates.io; publishing is the maintainer's decision.
+**Library crates:** the protocol logic is in storage- and framework-agnostic crates under `crates/` (Apache-2.0, `#![forbid(unsafe_code)]`, MSRV 1.88 (the node itself needs 1.89), docs and examples, `cargo publish --dry-run` in CI): `obx-types`, `obx-auth`, `obx-sign`, `obx-feed`, `obx-ingest`, `obx-axum`, `obx-client`, `obx-conformance`. They are **not published** on crates.io; publishing is the maintainer's decision.
 
 ## Parity with node-go
 
@@ -28,8 +28,8 @@ node-rs replaces node-go, node-php and node-ts as the single reference node of O
 | Ingest: files, blobs, resumable uploads, asset order | ✓ | ✓ |
 | Ingest: batch (JSON, NDJSON, async jobs), Idempotency-Key | ✓ | ✓ |
 | Imports: canonical CSV, package zip, images manifest, mirror, dry run | ✓ | ✓ (zip-slip and decompression-bomb limits in `obx-ingest`) |
-| Imports: Excel (.xlsx) | ✓ | ✓ |
-| Scheduled imports (https, SFTP, S3 sources) | ✓ | ✓ |
+| Imports: Excel (.xlsx) | ✓ | ✓ (in `obx-ingest`, with property tests) |
+| Scheduled imports (https, SFTP, S3 sources) | ✓ | ✓ (host keys pinned on first use; unchanged runs skipped; off in demo mode) |
 | Server renditions (web, square, thumb; EXIF orientation; flatten on white) | ✓ | ✓ |
 | Admin: setup, sessions, CSRF, login, logout, invitations, `/me`, password reset by e-mail | ✓ | ✓ |
 | Admin: settings (merge patch, effects on rights and grants), logo, favicon, appearance images | ✓ | ✓ |
@@ -44,7 +44,7 @@ node-rs replaces node-go, node-php and node-ts as the single reference node of O
 | Demo mode (`x-obx-demo`, `/admin/api/demo/login`) | node-ts | ✓ (seeded from the embedded fixtures, no seed archive; [docs/demo.md](docs/demo.md)) |
 | Metrics (`/metrics`), `/readyz` drain | ✓ | ✓ |
 | Storage: SQLite | ✓ | ✓ |
-| Storage: PostgreSQL | ✓ | not planned: SQLite only, plus offsite backups; `node-rs import-postgres` copies a node-go PostgreSQL database once |
+| Storage: PostgreSQL | ✓ | not planned: SQLite only, plus offsite backups; `node-rs import-postgres` copies a node-go PostgreSQL database once (CI job `node-go-postgres`) |
 | Blobs: local disk, S3-compatible (incl. R2) | ✓ | ✓ (GCS with HMAC: via S3 endpoint, untested) |
 | HTTPS built in (ACME) | ✓ | not planned: Caddy in front ([docs/hosting.md](docs/hosting.md)) |
 | `backup --to` / `restore --from` | ✓ | ✓ (node-go's backup format, both ways) |
@@ -61,7 +61,12 @@ node-rs replaces node-go, node-php and node-ts as the single reference node of O
 
 ## Left
 
-LEFT_ITEMS
+Nothing of node-go's feature set is left. What remains is small, or a step for the maintainer:
+
+1. **Dependencies:** `object_store` 0.12 still pulls in an old `quick-xml` with an advisory (ignored with its reason in `deny.toml`); moving to `object_store` 0.14 needs `reqwest` 0.13 across the node.
+2. **Rate limits** are per process (in memory); enough for one instance, which is the supported setup.
+3. **Untested combinations:** Google Cloud Storage through its S3 endpoint; `import-postgres` runs in CI only, not against a production-sized database.
+4. **Maintainer steps, not done:** tag `v0.1.0` (the release workflow builds the binaries and the image), publish the crates, move demo.openbrandexchange.com to node-rs ([docs/demo.md](docs/demo.md)), deprecate node-go, node-php and node-ts, and archive them after one release has run in production.
 
 ## Decisions taken (Richard, November 2026)
 
