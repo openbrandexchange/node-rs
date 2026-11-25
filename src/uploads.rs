@@ -31,6 +31,10 @@ struct Upload {
 }
 
 impl Upload {
+    fn plan(&self) -> obx_format::upload::PartPlan {
+        obx_format::upload::PartPlan::new(self.bytes as u64, self.part_bytes as u64)
+    }
+
     fn json(&self) -> Value {
         json!({"id": self.id, "sha256": self.sha256, "bytes": self.bytes, "content_type": self.content_type,
             "part_bytes": self.part_bytes, "parts_total": self.parts_total, "received_parts": self.received,
@@ -199,30 +203,9 @@ pub async fn h_part(
         .filter(|u| u.status == "open")
         .ok_or_else(|| Problem::new("not_found", "Upload not found or no longer open."))?;
     let n = n as i64;
-    if n < 1 || n > u.parts_total {
-        return Err(Problem::new(
-            "validation_failed",
-            format!("Part number must be 1..{}.", u.parts_total),
-        ));
-    }
-    let want = if n == u.parts_total {
-        u.bytes - (u.parts_total - 1) * u.part_bytes
-    } else {
-        u.part_bytes
-    };
-    let size = body.len() as i64;
-    if size > want {
-        return Err(Problem::new(
-            "payload_too_large",
-            format!("The file is larger than {want} bytes."),
-        ));
-    }
-    if size != want {
-        return Err(Problem::new(
-            "validation_failed",
-            format!("Part {n} must be exactly {want} bytes (got {size})."),
-        ));
-    }
+    u.plan()
+        .check_part(n.max(0) as u64, body.len() as u64)
+        .map_err(|e| Problem::new(e.code, e.detail))?;
     app.store
         .put(&part_key(&u.id, n), body)
         .await
@@ -257,16 +240,10 @@ pub async fn h_complete(State(app): State<App>, Path(id): Path<String>, headers:
         .await?
         .filter(|u| u.status == "open")
         .ok_or_else(|| Problem::new("not_found", "Upload not found or no longer open."))?;
-    if u.received.len() as i64 != u.parts_total {
-        let missing: Vec<String> = (1..=u.parts_total)
-            .filter(|i| !u.received.contains(i))
-            .map(|i| i.to_string())
-            .collect();
-        return Err(Problem::new(
-            "upload_incomplete",
-            format!("Parts missing: [{}].", missing.join(" ")),
-        ));
-    }
+    let received: Vec<u64> = u.received.iter().map(|&i| i as u64).collect();
+    u.plan()
+        .check_complete(&received)
+        .map_err(|e| Problem::new(e.code, e.detail))?;
     let mut data = Vec::with_capacity(u.bytes as usize);
     for i in 1..=u.parts_total {
         match app

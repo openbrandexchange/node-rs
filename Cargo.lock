@@ -1483,6 +1483,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -2039,7 +2040,12 @@ dependencies = [
  "mime_guess",
  "multer",
  "object_store",
- "obx-format",
+ "obx-auth",
+ "obx-axum",
+ "obx-feed",
+ "obx-ingest",
+ "obx-sign",
+ "obx-types",
  "rand 0.9.5",
  "regex",
  "reqwest",
@@ -2193,17 +2199,106 @@ dependencies = [
 ]
 
 [[package]]
-name = "obx-format"
+name = "obx-auth"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm 0.10.3",
+ "argon2 0.5.3",
+ "base64 0.22.1",
+ "hex",
+ "hmac 0.12.1",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "url",
+]
+
+[[package]]
+name = "obx-axum"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "obx-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "obx-client"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "obx-types",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "obx-conformance"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "obx-types",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "obx-feed"
+version = "0.1.0"
+dependencies = [
+ "obx-auth",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "obx-ingest"
 version = "0.1.0"
 dependencies = [
  "chrono",
  "csv",
+ "obx-types",
  "quick-xml",
  "regex",
  "serde",
  "serde_json",
  "unicode-normalization",
  "zip",
+]
+
+[[package]]
+name = "obx-sign"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "hmac 0.12.1",
+ "obx-auth",
+ "serde_json",
+ "sha2 0.10.9",
+ "url",
+]
+
+[[package]]
+name = "obx-types"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "jsonschema",
+ "rand 0.9.5",
+ "regex",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -2836,6 +2931,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -4055,6 +4151,15 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7265c9301c16a8711c992c2d8da90ee77ef54b1ed51482d6dfeb00dc756b1297"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]

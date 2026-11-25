@@ -20,8 +20,8 @@ cargo run --release -- serve
 Open <http://localhost:8080> and enter the setup code from the output. To load the example catalog of the fictional brand MAISON NOOR: in the admin, **Imports**, or
 
 ```sh
-cargo run --release -- import --csv spec/fixtures/maison-noor/products.csv \
-  --assets spec/fixtures/maison-noor/assets.csv --images spec/fixtures/maison-noor/images
+cargo run --release -- import --csv crates/obx-conformance/fixtures/maison-noor/products.csv \
+  --assets crates/obx-conformance/fixtures/maison-noor/assets.csv --images crates/obx-conformance/fixtures/maison-noor/images
 ```
 
 ## Put it online
@@ -52,8 +52,17 @@ scripts/update-ui.sh ../admin-ui
 - `src/catalog.rs`: every catalog write, visibility and the change-feed entries (ingest.md §8).
 - `src/http/`: protocol, change feed, Ingest API, admin API, the UI.
 - `src/imports.rs`, `src/jobs.rs`, `src/uploads.rs`: the canonical import, background jobs, resumable uploads.
-- `crates/obx-format`: the import format parser, vocabularies and GTINs.
-- `spec/`: schemas, vocabularies and fixtures vendored from [openbrandexchange/spec](https://github.com/openbrandexchange/spec) (CC-BY-4.0).
+- `crates/`: the reusable library crates, Apache-2.0, storage- and framework-agnostic, ready for crates.io (not published yet):
+  - `obx-types`: objects, problem documents, ids, GTINs, vocabularies, JSON Schema validation;
+  - `obx-auth`: tokens, constant-time comparison, passwords, derived keys, access tokens, client credentials, signed cursors;
+  - `obx-sign`: windowed signed asset URLs and webhook signatures;
+  - `obx-feed`: the change-feed cursor and paging rules over a `FeedSource` trait;
+  - `obx-ingest`: the canonical import format and resumable-upload part plans;
+  - `obx-axum`: problem responses, security and `OBX-Version` headers, JSON, ranges, rate limits for axum;
+  - `obx-client`: a typed client for retailer software;
+  - `obx-conformance`: the spec's fixtures and the ingest replay for Rust tests.
+  The node itself (this package: SQLite, HTTP server, admin-ui) is AGPL-3.0-only.
+- `crates/obx-types/spec/` (schemas, vocabularies) and `crates/obx-conformance/fixtures/` are vendored from [openbrandexchange/spec](https://github.com/openbrandexchange/spec) (CC-BY-4.0).
 
 Security problems: **security@openbrandexchange.com** ([SECURITY.md](SECURITY.md)).
 

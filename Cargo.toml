@@ -9,7 +9,13 @@ repository = "https://github.com/openbrandexchange/node-rs"
 publish = false
 
 [dependencies]
-obx-format = { path = "crates/obx-format" }
+obx-types = { path = "crates/obx-types", features = ["validate", "axum"] }
+obx-auth = { path = "crates/obx-auth" }
+obx-sign = { path = "crates/obx-sign" }
+obx-feed = { path = "crates/obx-feed" }
+obx-axum = { path = "crates/obx-axum" }
+# The import format crate was called obx-format inside node-rs.
+obx-format = { package = "obx-ingest", path = "crates/obx-ingest" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs", "time", "sync", "net", "io-util"] }
 axum = { version = "0.8", features = ["multipart"] }
 serde = { workspace = true }
@@ -48,7 +54,17 @@ codegen-units = 4
 strip = true
 
 [workspace]
-members = [".", "crates/obx-format"]
+members = [".", "crates/*"]
+
+# The library crates (crates/*) are Apache-2.0, so any OBX implementation can
+# use them; the node itself (this package) stays AGPL-3.0-only.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/openbrandexchange/node-rs"
+homepage = "https://openbrandexchange.com"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -59,7 +75,13 @@ serde_json = "1"
 [profile.dev.package."*"]
 opt-level = 2
 
-[lints.clippy]
+[lints]
+workspace = true
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
 # Problem (RFC 9457 document) is the error type of every handler; boxing it
 # everywhere buys nothing.
 result_large_err = "allow"

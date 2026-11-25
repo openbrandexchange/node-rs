@@ -1,12 +1,12 @@
 //! The canonical fixtures of the specification parse as expected.
 
-use obx_format::importfmt::{
+use obx_ingest::importfmt::{
     KNOWN_ASSET_COLUMNS, KNOWN_COLUMNS, parse_care, parse_certifications, parse_csv, parse_feature,
     parse_footwear_materials, parse_image_name, parse_materials, unknown_columns,
 };
 use serde_json::Value;
 
-const SPEC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/fixtures");
+const SPEC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../obx-conformance/fixtures");
 
 fn read(path: &str) -> Vec<u8> {
     std::fs::read(format!("{SPEC}/{path}")).unwrap_or_else(|e| panic!("{path}: {e}"))

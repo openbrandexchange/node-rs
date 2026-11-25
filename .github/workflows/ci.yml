@@ -29,7 +29,23 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Tests
-        run: cargo test --all --locked
+        run: cargo test --workspace --locked
+
+  crates:
+    # The obx-* library crates must stay publishable on their own (they are
+    # not published from CI; a maintainer decides when).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Docs (warnings are errors)
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude node-rs --no-deps --locked
+      - name: cargo publish --dry-run
+        run: cargo publish --workspace --exclude node-rs --dry-run --locked
+      - uses: dtolnay/rust-toolchain@1.88
+      - name: MSRV 1.88 (library crates)
+        run: cargo +1.88 check --workspace --exclude node-rs --locked
 
   conformance:
     runs-on: ubuntu-latest

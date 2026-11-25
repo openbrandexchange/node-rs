@@ -1,0 +1,24 @@
+[package]
+name = "obx-conformance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["obx", "open-brand-exchange", "conformance", "fixtures", "testing"]
+categories = ["development-tools::testing"]
+description = "Open Brand Exchange (OBX) spec fixtures for Rust tests: the MAISON NOOR catalog, schema examples and the ingest replay script with its expected results"
+readme = "README.md"
+include = ["src/**", "fixtures/**", "README.md", "LICENSE"]
+
+[lints]
+workspace = true
+
+[dependencies]
+obx-types = { version = "0.1.0", path = "../obx-types" }
+rust-embed = "8"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"

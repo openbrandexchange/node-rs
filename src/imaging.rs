@@ -201,7 +201,7 @@ mod tests {
     fn renders_fixture() {
         let data = std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/spec/fixtures/maison-noor/images/MN-1002_OLV_1_front.png"
+            "/crates/obx-conformance/fixtures/maison-noor/images/MN-1002_OLV_1_front.png"
         ))
         .unwrap();
         let r = super::render(&data).unwrap();

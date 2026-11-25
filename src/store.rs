@@ -17,6 +17,7 @@ pub fn blob_key(sha: &str) -> String {
     format!("blobs/{}/{}", &sha[..2.min(sha.len())], sha)
 }
 
+#[allow(dead_code)] // streaming helpers used by the portal downloads (next commit)
 impl Store {
     pub fn open(url: &str, key_id: Option<&str>, secret: Option<&str>) -> Result<Store, String> {
         if let Some(path) = url.strip_prefix("file://") {
@@ -79,12 +80,69 @@ impl Store {
         }
     }
 
-    #[allow(dead_code)] // range reads straight from the store (roadmap: large originals)
     pub async fn get_range(&self, key: &str, range: std::ops::Range<u64>) -> Result<Bytes, String> {
         self.inner
             .get_range(&self.path(key), range)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// The size of a stored object, None when it does not exist.
+    pub async fn size(&self, key: &str) -> Result<Option<u64>, String> {
+        match self.inner.head(&self.path(key)).await {
+            Ok(m) => Ok(Some(m.size)),
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// A stored object as a stream of chunks (for large files).
+    pub async fn stream(
+        &self,
+        key: &str,
+        range: Option<std::ops::Range<u64>>,
+    ) -> Result<Option<futures::stream::BoxStream<'static, Result<Bytes, String>>>, String> {
+        use futures::StreamExt;
+        let opts = object_store::GetOptions {
+            range: range.map(object_store::GetRange::Bounded),
+            ..Default::default()
+        };
+        match self.inner.get_opts(&self.path(key), opts).await {
+            Ok(r) => Ok(Some(
+                r.into_stream()
+                    .map(|c| c.map_err(|e| e.to_string()))
+                    .boxed(),
+            )),
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Uploads a local file in parts of 8 MiB, without reading it into memory.
+    pub async fn put_file(&self, key: &str, file: &std::path::Path) -> Result<u64, String> {
+        use tokio::io::AsyncReadExt;
+        let mut f = tokio::fs::File::open(file)
+            .await
+            .map_err(|e| e.to_string())?;
+        let up = self
+            .inner
+            .put_multipart(&self.path(key))
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut w = object_store::WriteMultipart::new_with_chunk_size(up, 8 << 20);
+        let mut buf = vec![0u8; 1 << 20];
+        let mut total = 0u64;
+        loop {
+            let n = f.read(&mut buf).await.map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            w.wait_for_capacity(4).await.map_err(|e| e.to_string())?;
+            w.write(&buf[..n]);
+            total += n as u64;
+        }
+        w.finish().await.map_err(|e| e.to_string())?;
+        Ok(total)
     }
 
     pub async fn exists(&self, key: &str) -> bool {

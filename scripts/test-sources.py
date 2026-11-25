@@ -14,7 +14,7 @@ import http.cookiejar, http.server, json, os, shutil, socket, subprocess, sys, t
 from xml.sax.saxutils import escape
 
 RS = os.path.abspath(sys.argv[1])
-FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "spec", "fixtures")
+FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "crates", "obx-conformance", "fixtures")
 MN = os.path.join(FIX, "maison-noor")
 PORT = 18471
 BASE = f"http://127.0.0.1:{PORT}"

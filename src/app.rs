@@ -4,8 +4,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use bytes::Bytes;
 use rusqlite::{OptionalExtension, params};
 use serde::{Serialize, de::DeserializeOwned};
@@ -21,13 +19,14 @@ use crate::settings::Settings;
 use crate::store::{Store, blob_key};
 
 pub const SOFTWARE: &str = "obx-node-rs";
-pub const SPEC_VERSION: &str = "0.3.1";
-pub const OBX_VERSION: &str = "0.3";
+pub const SPEC_VERSION: &str = obx_types::SPEC_VERSION;
+#[allow(dead_code)]
+pub const OBX_VERSION: &str = obx_types::OBX_VERSION;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub const MAX_UPLOAD_BYTES: u64 = 100 << 20;
-pub const MAX_OBJECT_BYTES: u64 = 2 << 30;
-pub const PART_BYTES: u64 = 8 << 20;
+pub const MAX_OBJECT_BYTES: u64 = obx_format::upload::MAX_OBJECT_BYTES;
+pub const PART_BYTES: u64 = obx_format::upload::PART_BYTES;
 pub const MAX_BATCH_OPERATIONS: usize = 1000;
 pub const MAX_IMPORT_BYTES: u64 = 2 << 30;
 
@@ -45,7 +44,9 @@ pub struct Inner {
     pub changed: Notify,
     /// Woken when a job is queued.
     pub jobs: Notify,
-    limiter: Mutex<HashMap<String, (i64, u32)>>,
+    limiter: obx_axum::RateLimiter,
+    pub cursors: obx_auth::CursorCodec,
+    pub signer: obx_sign::UrlSigner,
     rendering: Mutex<std::collections::HashSet<String>>,
 }
 
@@ -125,7 +126,11 @@ impl App {
             })
             .await
             .map_err(|e| e.to_string())?;
+        let cursors = obx_auth::CursorCodec::new(keys.clone(), node_id.clone());
+        let signer = obx_sign::UrlSigner::new(keys.clone(), cfg.public_url.clone());
         let app = App(Arc::new(Inner {
+            cursors,
+            signer,
             cfg,
             db,
             store,
@@ -134,7 +139,7 @@ impl App {
             render_tx,
             changed: Notify::new(),
             jobs: Notify::new(),
-            limiter: Mutex::new(HashMap::new()),
+            limiter: obx_axum::RateLimiter::new(),
             rendering: Mutex::new(Default::default()),
         }));
         if let Some(code) = print_code {
@@ -411,66 +416,32 @@ impl App {
     // ---- cursors and signed URLs ----------------------------------------------
 
     pub fn encode_cursor<T: Serialize>(&self, kind: &str, v: &T) -> String {
-        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(v).expect("cursor"));
-        let sig = &self
-            .keys
-            .sign(&format!("cursor/{kind}/{}", self.node_id), &payload)[..32];
-        format!("{payload}.{sig}")
+        self.cursors.encode(kind, v)
     }
 
     pub fn decode_cursor<T: DeserializeOwned>(&self, kind: &str, c: &str) -> Option<T> {
-        if c.len() > 4096 {
-            return None;
-        }
-        let (payload, sig) = c.rsplit_once('.')?;
-        if payload.is_empty() {
-            return None;
-        }
-        let want = &self
-            .keys
-            .sign(&format!("cursor/{kind}/{}", self.node_id), payload)[..32];
-        if !secure::eq(sig, want) {
-            return None;
-        }
-        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()
+        self.cursors.decode(kind, c)
     }
 
-    fn sign_path(&self, path: &str, tag: &str, exp: i64) -> String {
-        self.keys.sign("url", &format!("GET\n{path}\n{exp}\n{tag}"))
-    }
-
-    /// A signed URL valid for one hour and its expiry (RFC 3339).
+    /// A signed URL (windowed, obx-sign) and its expiry (RFC 3339).
     pub fn signed_url(&self, path: &str, tag: &str) -> (String, String) {
-        let exp = chrono::Utc::now().timestamp() + 3600;
-        let sig = self.sign_path(path, tag, exp);
-        let mut q = url::form_urlencoded::Serializer::new(String::new());
-        q.append_pair("exp", &exp.to_string());
-        if !tag.is_empty() {
-            q.append_pair("v", tag);
-        }
-        q.append_pair("sig", &sig);
-        let t = chrono::DateTime::from_timestamp(exp, 0).unwrap();
-        (
-            format!("{}{path}?{}", self.cfg.public_url, q.finish()),
-            t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        )
+        let u = self.signer.sign(path, tag);
+        let exp = u.expires_rfc3339();
+        (u.url, exp)
     }
 
-    /// The viewer tag of a valid signature on path.
-    pub fn verify_signed(&self, path: &str, q: &HashMap<String, String>) -> Option<String> {
-        let sig = q.get("sig").filter(|s| !s.is_empty())?;
-        let exp: i64 = q.get("exp")?.parse().ok()?;
-        let now = chrono::Utc::now().timestamp();
-        if exp < now || exp > now + 25 * 3600 {
-            return None;
-        }
-        let tag = q.get("v").cloned().unwrap_or_default();
-        secure::eq(&sig.to_lowercase(), &self.sign_path(path, &tag, exp)).then_some(tag)
+    /// The viewer tag and expiry of a valid signature on path.
+    pub fn verify_signed(
+        &self,
+        path: &str,
+        q: &HashMap<String, String>,
+    ) -> std::result::Result<obx_sign::Verified, obx_sign::VerifyError> {
+        self.signer.verify(path, q)
     }
 
     // ---- rate limits -----------------------------------------------------------
 
-    /// A fixed one-minute window per key; Err(retry_after) when exceeded.
+    /// A fixed window per key; Err(retry_after) when exceeded.
     pub fn limit(
         &self,
         key: &str,
@@ -482,20 +453,9 @@ impl App {
             .test_rate_limit
             .unwrap_or(per_window)
             .min(per_window.max(1));
-        let now = chrono::Utc::now().timestamp();
-        let mut m = self.limiter.lock().unwrap();
-        if m.len() > 100_000 {
-            m.retain(|_, (start, _)| now - *start < window_secs);
-        }
-        let e = m.entry(key.to_string()).or_insert((now, 0));
-        if now - e.0 >= window_secs {
-            *e = (now, 0);
-        }
-        let reset = window_secs - (now - e.0);
-        if e.1 >= per_window {
-            return Err(reset.max(1));
-        }
-        e.1 += 1;
-        Ok((per_window, per_window - e.1, reset))
+        let a = self
+            .limiter
+            .check(key, per_window, window_secs, chrono::Utc::now().timestamp())?;
+        Ok((a.limit, a.remaining, a.reset))
     }
 }

@@ -96,6 +96,8 @@ pub fn viewer_for_user(c: &Connection, u: &User) -> Result<Viewer> {
             kind: "admin".into(),
             original_allowed: true,
             user_id: u.id.clone(),
+            user_name: u.name.clone(),
+            language: u.language.clone(),
             ..Default::default()
         });
     }
@@ -116,6 +118,8 @@ pub fn viewer_for_user(c: &Connection, u: &User) -> Result<Viewer> {
         brand_ids: ret.brand_ids.clone(),
         original_allowed: original_allowed(&s, &ret),
         user_id: u.id.clone(),
+        user_name: u.name.clone(),
+        language: u.language.clone(),
         ..Default::default()
     })
 }
@@ -2267,27 +2271,6 @@ pub async fn access_reject(
         })
         .await?;
     Ok(ok(&out))
-}
-
-/// GET /admin/api/stats: download statistics are not recorded yet; the
-/// shape is node-go's with zero counts.
-pub async fn stats(State(app): State<App>, method: Method, headers: HeaderMap) -> Res {
-    admin_guard(&app, &headers, &method, "admin").await?;
-    let counts = app
-        .db
-        .read(|c| {
-            let n = |q: &str| c.query_row(q, [], |r| r.get::<_, i64>(0));
-            Ok(
-                json!({"products": n("SELECT COUNT(*) FROM products WHERE visible = 1")?,
-                "assets": n("SELECT COUNT(*) FROM assets WHERE visible = 1")?,
-                "retailers": n("SELECT COUNT(*) FROM retailers WHERE status = 'active'")?}),
-            )
-        })
-        .await?;
-    Ok(ok(
-        &json!({"totals": {"downloads": 0, "files": 0, "bytes": 0, "retailers_active": 0}, "catalog": counts,
-        "by_day": [], "top_products": [], "top_retailers": [], "by_kind": []}),
-    ))
 }
 
 // ---- the signed-in person -------------------------------------------------------------

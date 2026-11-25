@@ -3,10 +3,10 @@
 
 use std::io::Write;
 
-use obx_format::importfmt::*;
+use obx_ingest::importfmt::*;
 use serde_json::Value;
 
-const SPEC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/fixtures");
+const SPEC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../obx-conformance/fixtures");
 
 fn read(path: &str) -> Vec<u8> {
     std::fs::read(format!("{SPEC}/{path}")).unwrap_or_else(|e| panic!("{path}: {e}"))
@@ -454,7 +454,7 @@ fn workbook_lying_size() {
     );
     let mut data = build(&big, &[]);
     lie_about_size(&mut data, "xl/worksheets/sheet1.xml", 1000);
-    let err = convert_workbook(&data, "products").err().expect("an error");
+    let err = convert_workbook(&data, "products").expect_err("an error");
     assert_eq!(err.code, ERR_WORKBOOK_TOO_LARGE, "{}", err.detail);
 }
 

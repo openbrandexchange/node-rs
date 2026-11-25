@@ -20,6 +20,7 @@ mod schemas;
 mod secure;
 mod settings;
 mod sources;
+mod stats;
 mod store;
 mod uploads;
 
