@@ -107,6 +107,67 @@ pub async fn check(raw: &str, allow_private: bool) -> Result<url::Url, Problem> 
     }
 }
 
+/// A resolver that refuses host names resolving to an unsafe address. The
+/// HTTP client connects only to the addresses it returns, so a name cannot
+/// pass `check` and then resolve to a private address at connect time
+/// (DNS rebinding).
+struct SafeResolver {
+    allow_private: bool,
+}
+
+impl reqwest::dns::Resolve for SafeResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let allow_private = self.allow_private;
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let addrs: Vec<std::net::SocketAddr> =
+                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            if addrs.is_empty() || addrs.iter().any(|a| ip_unsafe(a.ip(), allow_private)) {
+                return Err(Box::new(Refused) as Box<dyn std::error::Error + Send + Sync>);
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// The error of a connection refused by the URL policy.
+#[derive(Debug)]
+pub struct Refused;
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("refused: the URL resolves to a private address")
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// True when err (or its source chain) is a policy refusal.
+pub fn is_refused(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut e: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(x) = e {
+        if x.is::<Refused>() {
+            return true;
+        }
+        e = x.source();
+    }
+    false
+}
+
+/// An outbound HTTP client under the URL policy: no redirects, a timeout,
+/// and every resolved address checked when connecting. IP-literal URLs
+/// bypass the resolver, so callers run `check` on the URL first.
+pub fn client(allow_private: bool, timeout: std::time::Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout)
+        .connect_timeout(timeout.min(std::time::Duration::from_secs(10)))
+        .dns_resolver(std::sync::Arc::new(SafeResolver { allow_private }))
+        .user_agent(format!("{}/{}", crate::app::SOFTWARE, crate::app::VERSION))
+        .build()
+        .expect("http client")
+}
+
 #[cfg(test)]
 mod tests {
     #[tokio::test]

@@ -26,7 +26,7 @@ Environment variables, checked at start (`node-rs check-config` checks without s
 | `OBX_METRICS_TOKEN` | not set | At least 16 characters; scrapers send `Authorization: Bearer <token>`. Without it `/metrics` is readable by anyone who can reach the node. |
 | `OBX_SHUTDOWN_DELAY` | `0` (0–60) | Seconds `/readyz` answers 503 after SIGTERM before the server stops accepting requests (for load balancers). Running requests always finish. |
 | `OBX_LOG_FORMAT`, `OBX_LOG_LEVEL` | `text` (`json` in Docker), `info` | Logs go to standard error. |
-| `OBX_ALLOW_PRIVATE_URLS` | `false` | Development only. |
+| `OBX_ALLOW_PRIVATE_URLS` | `false` | Development only: allows http:// and private addresses for webhook and import URLs (link-local stays blocked). |
 | `OBX_TEST_RATE_LIMIT` | not set | Conformance testing only: a lower per-minute API limit. |
 
 `/healthz` answers `ok` while the process and database work; `/readyz` answers JSON (`status`, `version`, `schema_version`, `checks`) and 503 while shutting down or when the database or file store does not answer. Every response carries an `X-Request-Id` (a sane incoming one is kept); the audit log records it.

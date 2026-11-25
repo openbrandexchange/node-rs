@@ -7,6 +7,8 @@ mod backup;
 mod catalog;
 mod config;
 mod db;
+mod export_proto;
+mod exports;
 mod http;
 mod ids;
 mod imaging;
@@ -24,7 +26,13 @@ mod secure;
 mod settings;
 mod stats;
 mod store;
+#[cfg(test)]
+mod tests_exports_webhooks;
 mod uploads;
+mod usage;
+mod usage_proto;
+mod webhook_proto;
+mod webhooks;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -473,6 +481,7 @@ async fn main() -> ExitCode {
             };
             jobs::start_workers(a.clone());
             ops::start(a.clone());
+            webhooks::start(a.clone());
             let listener = match tokio::net::TcpListener::bind(SocketAddr::new(bind, port)).await {
                 Ok(l) => l,
                 Err(e) => {

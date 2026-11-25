@@ -53,6 +53,8 @@ pub struct Inner {
     pub metrics: crate::metrics::Metrics,
     /// Set on shutdown: /readyz answers 503 while running requests finish.
     pub draining: std::sync::atomic::AtomicBool,
+    /// Woken when webhook deliveries are queued.
+    pub webhooks_due: Notify,
     rendering: Mutex<std::collections::HashSet<String>>,
 }
 
@@ -150,6 +152,7 @@ impl App {
             changed: Notify::new(),
             jobs: Notify::new(),
             limiter: obx_axum::RateLimiter::new(),
+            webhooks_due: Notify::new(),
             rendering: Mutex::new(Default::default()),
         }));
         if let Some(code) = print_code {

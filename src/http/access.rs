@@ -234,6 +234,11 @@ pub async fn create(
             }
         });
     }
+    crate::webhooks::brand_event(
+        &app,
+        "access_request.created",
+        json!({"access_request_id": id, "retailer_name": clean_ret["name"]}),
+    );
     Ok(json(
         202,
         &json!({"id": id, "status": "pending", "created_at": now, "decided_at": null, "reason": null, "request_token": token,

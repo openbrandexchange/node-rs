@@ -252,6 +252,7 @@ async fn run_job(app: &App, j: Job) {
         match j.kind.as_str() {
             "batch" => run_batch_job(app, &j).await,
             "import" => crate::imports::run_import_job(app, &j).await,
+            "export" => crate::exports::run_export_job(app, &j).await,
             k => Err((None, format!("unknown job kind {k}"))),
         }
     };
@@ -274,6 +275,7 @@ async fn run_job(app: &App, j: Job) {
             Ok(())
         })
         .await;
+    crate::webhooks::after_job(app, &j.id);
 }
 
 #[derive(Deserialize)]

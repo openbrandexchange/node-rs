@@ -162,8 +162,6 @@ async fn method_not_allowed() -> Problem {
 }
 
 pub fn router(app: App) -> Router {
-    let ni = || any(protocol::not_implemented);
-
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -189,11 +187,45 @@ pub fn router(app: App) -> Router {
             "/obx/v1/assets/{id}/renditions/{name}",
             get(protocol::rendition),
         )
-        .route("/obx/v1/exports", ni())
-        .route("/obx/v1/exports/{*rest}", ni())
-        .route("/obx/v1/usage", ni())
-        .route("/obx/v1/webhooks", ni())
-        .route("/obx/v1/webhooks/{*rest}", ni())
+        // lane B: exports, usage, webhooks (protocol and brand)
+        .route("/obx/v1/exports", post(crate::exports::h_create))
+        .route("/obx/v1/exports/{id}", get(crate::exports::h_get))
+        .route(
+            "/obx/v1/exports/{id}/manifest",
+            get(crate::exports::h_manifest),
+        )
+        .route(
+            "/obx/v1/exports/{id}/parts/{n}",
+            get(crate::exports::h_part),
+        )
+        .route("/obx/v1/usage", post(crate::usage::h_usage))
+        .route(
+            "/obx/v1/webhooks",
+            get(crate::webhooks::h_list).post(crate::webhooks::h_create),
+        )
+        .route(
+            "/obx/v1/webhooks/{id}",
+            axum::routing::delete(crate::webhooks::h_delete),
+        )
+        .route("/obx/v1/webhooks/{id}/test", post(crate::webhooks::h_test))
+        .route(
+            "/admin/api/webhooks",
+            get(crate::webhooks::admin_list).post(crate::webhooks::admin_create),
+        )
+        .route(
+            "/admin/api/webhooks/{id}",
+            axum::routing::patch(crate::webhooks::admin_patch)
+                .delete(crate::webhooks::admin_delete),
+        )
+        .route(
+            "/admin/api/webhooks/{id}/test",
+            post(crate::webhooks::admin_test),
+        )
+        .route(
+            "/admin/api/webhooks/{id}/deliveries",
+            get(crate::webhooks::admin_deliveries),
+        )
+        // end lane B
         // Ingest API
         .route("/obx/v1/ingest", get(ingest::info))
         .route("/obx/v1/ingest/", get(ingest::info))
@@ -356,10 +388,6 @@ pub fn router(app: App) -> Router {
         .route(
             "/admin/api/import-sources",
             get(admin::empty_list).post(admin::import_source_create),
-        )
-        .route(
-            "/admin/api/webhooks",
-            get(admin::empty_list).post(admin::brand_webhook_create),
         )
         // lane A: e-mail, people, personal data, audit log, metrics
         .route("/metrics", get(crate::metrics::handler))
