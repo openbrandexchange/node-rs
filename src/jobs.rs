@@ -264,6 +264,9 @@ async fn run_job(app: &App, j: Job) {
             ("failed", r, Some(e))
         }
     };
+    if j.kind == "import" {
+        crate::sources::after_run(app, &j).await;
+    }
     let id = j.id.clone();
     let res = result.map(|v| v.to_string());
     let _ = app

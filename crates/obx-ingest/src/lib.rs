@@ -3,7 +3,8 @@
 //! or HTTP (a port of node-go's `internal/importfmt`).
 //!
 //! * [`importfmt`]: CSV tables and header names, materials, care codes,
-//!   article data cells, image file names and zip entry checks.
+//!   article data cells, image file names, zip entry checks and Excel
+//!   workbooks ([`importfmt::convert_workbook`], import-format.md §5).
 //! * [`upload`]: the part plan of a resumable multipart upload.
 //! * [`gtin`] and [`vocab`] are re-exported from `obx-types`.
 //!

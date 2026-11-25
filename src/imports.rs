@@ -2,8 +2,8 @@
 //! assets.csv and images, as a zip package or as separate parts, run as a
 //! job. Row and file problems are ImportRowError items of the job; they
 //! never fail the request. A port of node-go's imports.go and
-//! import_http.go (Excel workbooks and scheduled import sources are not
-//! ported yet).
+//! import_http.go. Excel workbooks (import-format.md §5) are converted to
+//! the same rows by `obx_format::importfmt::convert_workbook`.
 
 #![allow(
     clippy::result_large_err,
@@ -98,6 +98,15 @@ pub struct ImportPayload {
     pub allowed: Option<Vec<String>>,
     #[serde(default)]
     pub can_delete: bool,
+    /// The ImportSource of a scheduled or pull run (its files are fetched
+    /// when the job starts).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_id: String,
+    /// Run even when the remote files did not change.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub fingerprint: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -114,6 +123,15 @@ pub struct Counts {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ImportResult {
+    /// A source run skipped because its files did not change (node-go
+    /// wrote x-node-go-unchanged).
+    #[serde(
+        default,
+        rename = "x-node-rs-unchanged",
+        alias = "x-node-go-unchanged",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    unchanged: bool,
     #[serde(default)]
     mode: String,
     #[serde(default)]
@@ -614,6 +632,9 @@ struct State_ {
     gtin_ext: HashMap<String, String>,
     gtin_row: HashMap<String, usize>,
     present: Present,
+    /// Row 1 of products.xlsx / assets.xlsx, keyed by the CSV file they
+    /// stand for (import-format.md §5.5).
+    workbooks: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -637,8 +658,18 @@ impl State_ {
         value: &str,
         warning: bool,
     ) {
+        let (mut file, mut row, mut detail) = (file.to_string(), row, detail.to_string());
+        if let Some(header) = self.workbooks.get(&file) {
+            // The rows of a workbook: Excel's row numbers and a locator (§5.5).
+            file = file.trim_end_matches(".csv").to_string() + ".xlsx";
+            if row > 0 {
+                row += 1;
+            }
+            detail = fmt::workbook_locator(header, row, col) + &detail;
+        }
+        let detail = detail.as_str();
         let mut e = ImportRowError {
-            file: file.into(),
+            file,
             severity: if warning { "warning" } else { "error" }.into(),
             obx_error: code.into(),
             detail: truncate(detail, 2000),
@@ -661,6 +692,78 @@ impl State_ {
         self.errors.push(e);
     }
 
+    /// Records a conversion error or warning of a workbook as it is.
+    fn add_issue(&mut self, c: &fmt::CellIssue) {
+        if c.severity == "warning" {
+            self.counts.warnings += 1;
+        } else {
+            self.counts.errors += 1;
+        }
+        self.errors.push(ImportRowError {
+            file: c.file.clone(),
+            severity: c.severity.clone(),
+            obx_error: c.obx_error.clone(),
+            detail: truncate(&c.detail, 2000),
+            row: (c.row > 0).then_some(c.row),
+            column: (!c.column.is_empty()).then(|| c.column.clone()),
+            value: c.value.as_deref().map(|v| truncate(v, 500)),
+        });
+    }
+
+    /// The name an import's products / assets file has in messages.
+    fn file_name(&self, csv_name: &str) -> String {
+        if self.workbooks.contains_key(csv_name) {
+            csv_name.trim_end_matches(".csv").to_string() + ".xlsx"
+        } else {
+            csv_name.to_string()
+        }
+    }
+
+    /// Parses products.csv or assets.csv (role products / assets), or
+    /// converts the workbook that stands for it (import-format.md §5). A
+    /// workbook that cannot be imported gives one ImportRowError with row
+    /// null and fails the import with that code.
+    fn load_table(&mut self, role: &str, input: &TableIn) -> Result<fmt::Table> {
+        let csv_name = format!("{role}.csv");
+        let data = match input {
+            TableIn::Csv(b) => {
+                return fmt::parse_csv(b)
+                    .map_err(|e| Problem::new("import_invalid", format!("{csv_name}: {e}")));
+            }
+            TableIn::Workbook(b) => b,
+        };
+        let file = fmt::workbook_file(role);
+        let mut refuse = |code: &str, detail: String| {
+            self.add_issue(&fmt::CellIssue {
+                file: file.clone(),
+                severity: "error".into(),
+                obx_error: code.into(),
+                detail: detail.clone(),
+                ..Default::default()
+            });
+            Problem::new(code, format!("{file}: {detail}"))
+        };
+        if data.len() as u64 > crate::app::MAX_IMPORT_BYTES {
+            return Err(refuse(
+                "payload_too_large",
+                format!(
+                    "the file is larger than {} bytes",
+                    crate::app::MAX_IMPORT_BYTES
+                ),
+            ));
+        }
+        let wb = match fmt::convert_workbook(data, role) {
+            Ok(wb) => wb,
+            Err(e) => return Err(refuse(e.code, e.detail)),
+        };
+        for c in wb.errors.iter().chain(&wb.warnings) {
+            self.add_issue(c);
+        }
+        self.workbooks.insert(csv_name, wb.rows[0].clone());
+        fmt::table_from_records(wb.rows)
+            .map_err(|e| Problem::new("import_invalid", format!("{file}: {e}")))
+    }
+
     fn count(&mut self, result: &str) {
         match result {
             "created" => self.counts.created += 1,
@@ -676,7 +779,10 @@ impl Importer {
         if !t.has("style_number") {
             return Err(Problem::new(
                 "import_invalid",
-                "products.csv needs a style_number column.",
+                format!(
+                    "{} needs a style_number column.",
+                    self.st.file_name("products.csv")
+                ),
             ));
         }
         for c in fmt::unknown_columns(&t.header, fmt::KNOWN_COLUMNS) {
@@ -1189,7 +1295,7 @@ impl Importer {
         if !t.has("file") {
             return Err(Problem::new(
                 "import_invalid",
-                "assets.csv needs a file column.",
+                format!("{} needs a file column.", self.st.file_name("assets.csv")),
             ));
         }
         for c in fmt::unknown_columns(&t.header, fmt::KNOWN_ASSET_COLUMNS) {
@@ -1943,30 +2049,19 @@ fn apply_plan(st: &mut State_, w: &mut Writer, plan: &mut ProductPlan) -> Result
 
 // ---- inputs ----------------------------------------------------------------------------
 
-const MAX_ZIP_ENTRIES: usize = 100_000;
-const MAX_ZIP_UNCOMPRESSED: u64 = 10 * MAX_UPLOAD_BYTES * 3;
+use fmt::{is_other_spreadsheet_name as is_other_spreadsheet, is_workbook_name};
 
-fn is_workbook_name(n: &str) -> bool {
-    n.to_lowercase().ends_with(".xlsx")
-}
-
-fn is_other_spreadsheet(n: &str) -> bool {
-    let l = n.to_lowercase();
-    [".xls", ".xlsm", ".xlsb", ".ods", ".numbers"]
-        .iter()
-        .any(|e| l.ends_with(e))
-}
-
-fn workbook_unsupported(name: &str) -> Problem {
-    Problem::new(
-        "workbook_invalid",
-        format!("{name}: Excel import is not supported yet; save the sheet as CSV (UTF-8)."),
-    )
+/// products.csv or assets.csv of an import: CSV bytes, or an Excel workbook
+/// (import-format.md §5).
+#[derive(Debug, Clone)]
+enum TableIn {
+    Csv(Vec<u8>),
+    Workbook(Vec<u8>),
 }
 
 struct Inputs {
-    products: Option<Vec<u8>>,
-    assets: Option<Vec<u8>>,
+    products: Option<TableIn>,
+    assets: Option<TableIn>,
     images: Vec<ImageSource>,
     temp: Vec<PathBuf>,
 }
@@ -1977,40 +2072,42 @@ fn temp_path(tag: &str) -> PathBuf {
 
 /// Reads a zip file on disk: products.csv/assets.csv (packages only) and
 /// images.
+/// The problem of a zip that cannot be read (texts as node-go's).
+fn zip_problem(e: fmt::ZipError) -> Problem {
+    match e {
+        fmt::ZipError::Unreadable(_) => {
+            Problem::new("import_invalid", "The file is not a readable zip file.")
+        }
+        fmt::ZipError::Unsafe(m) => {
+            Problem::new("import_invalid", format!("Unsafe zip entry: {m}"))
+        }
+        fmt::ZipError::TooManyEntries(n) => Problem::new(
+            "import_invalid",
+            format!("The zip has more than {n} entries."),
+        ),
+        fmt::ZipError::TooLarge(m) => Problem::new(
+            "import_invalid",
+            format!(
+                "The zip unpacks to more than {} bytes ({m}).",
+                fmt::PACKAGE_LIMITS.max_total_bytes
+            ),
+        ),
+    }
+}
+
 fn read_package(
     path: &PathBuf,
     is_package: bool,
-) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>, Vec<ImageSource>)> {
-    use std::io::Read;
+) -> Result<(Option<TableIn>, Option<TableIn>, Vec<ImageSource>)> {
     let f = std::fs::File::open(path).map_err(Problem::internal)?;
-    let mut z = zip::ZipArchive::new(f)
-        .map_err(|_| Problem::new("import_invalid", "The file is not a readable zip file."))?;
-    if z.len() > MAX_ZIP_ENTRIES {
-        return Err(Problem::new(
-            "import_invalid",
-            format!("The zip has more than {MAX_ZIP_ENTRIES} entries."),
-        ));
-    }
-    let mut total = 0u64;
-    let mut entries = Vec::new();
-    for i in 0..z.len() {
-        let e = z
-            .by_index_raw(i)
-            .map_err(|_| Problem::new("import_invalid", "The zip cannot be read."))?;
-        let name = e.name().to_string();
-        let symlink = e.is_symlink();
-        fmt::safe_entry(&name, symlink)
-            .map_err(|err| Problem::new("import_invalid", format!("Unsafe zip entry: {err}")))?;
-        total += e.size();
-        if total > MAX_ZIP_UNCOMPRESSED {
-            return Err(Problem::new(
-                "import_invalid",
-                format!("The zip unpacks to more than {MAX_ZIP_UNCOMPRESSED} bytes."),
-            ));
-        }
-        entries.push((i, name, e.is_dir()));
-    }
+    let mut z = fmt::ZipPackage::open(f, fmt::PACKAGE_LIMITS).map_err(zip_problem)?;
+    let entries: Vec<(usize, String, bool)> = z
+        .entries()
+        .iter()
+        .map(|e| (e.index, e.name.clone(), e.is_dir))
+        .collect();
     let mut csvs: Vec<(usize, String)> = Vec::new();
+    let mut workbooks: Vec<(usize, String)> = Vec::new();
     let mut images = Vec::new();
     for (i, name, dir) in entries {
         if dir || fmt::ignored(&name) {
@@ -2021,7 +2118,7 @@ fn read_package(
         if lower.ends_with(".csv") && is_package {
             csvs.push((i, base));
         } else if (lower == "products.xlsx" || lower == "assets.xlsx") && is_package {
-            return Err(workbook_unsupported(&base));
+            workbooks.push((i, base));
         } else if fmt::is_image(&base) {
             images.push(ImageSource {
                 name: base,
@@ -2032,28 +2129,56 @@ fn read_package(
             });
         }
     }
-    let mut read = |i: usize, name: &str| -> Result<Vec<u8>> {
-        let mut e = z
-            .by_index(i)
-            .map_err(|_| Problem::new("import_invalid", format!("{name} cannot be read.")))?;
-        let mut b = Vec::new();
-        e.by_ref()
-            .take(256 << 20)
-            .read_to_end(&mut b)
-            .map_err(|_| Problem::new("import_invalid", format!("{name} cannot be read.")))?;
-        Ok(b)
+    let mut read = |i: usize, name: &str, limit: u64| -> Result<Vec<u8>> {
+        z.read(i, limit).map_err(|e| match e {
+            fmt::ZipError::TooLarge(m) => Problem::new("import_invalid", format!("{name}: {m}.")),
+            _ => Problem::new("import_invalid", format!("{name} cannot be read.")),
+        })
     };
     let (mut products, mut assets) = (None, None);
     let mut other = Vec::new();
     for (i, base) in &csvs {
         match base.to_lowercase().as_str() {
-            "products.csv" => products = Some(read(*i, base)?),
-            "assets.csv" => assets = Some(read(*i, base)?),
+            "products.csv" => products = Some(TableIn::Csv(read(*i, base, 256 << 20)?)),
+            "assets.csv" => assets = Some(TableIn::Csv(read(*i, base, 256 << 20)?)),
             _ => other.push((*i, base.clone())),
         }
     }
+    for (i, base) in &workbooks {
+        let name = base.to_lowercase();
+        let dst = if name == "products.xlsx" {
+            &mut products
+        } else {
+            &mut assets
+        };
+        match dst {
+            Some(TableIn::Workbook(_)) => {
+                return Err(Problem::new(
+                    "import_invalid",
+                    format!("The package has more than one {name}."),
+                ));
+            }
+            Some(TableIn::Csv(_)) => {
+                return Err(Problem::new(
+                    "import_invalid",
+                    format!(
+                        "The package has both {} and {name}; send one of them.",
+                        name.trim_end_matches(".xlsx").to_string() + ".csv"
+                    ),
+                ));
+            }
+            None => {}
+        }
+        // One byte over the limit, so the import reports payload_too_large.
+        *dst = Some(TableIn::Workbook(read(
+            *i,
+            base,
+            crate::app::MAX_IMPORT_BYTES + 1,
+        )?));
+    }
+    // The "only *.csv" fallback does not extend to workbooks (§5.1).
     if products.is_none() && other.len() == 1 {
-        products = Some(read(other[0].0, &other[0].1)?);
+        products = Some(TableIn::Csv(read(other[0].0, &other[0].1, 256 << 20)?));
     }
     Ok((products, assets, images))
 }
@@ -2077,10 +2202,12 @@ async fn load_inputs(app: &App, p: &ImportPayload) -> Result<Inputs> {
         };
         match f.field.as_str() {
             "csv" | "assets_csv" => {
-                if is_workbook_name(&f.name) {
-                    return Err(workbook_unsupported(&f.name));
-                }
                 let b = get().await?.to_vec();
+                let b = if is_workbook_name(&f.name) {
+                    TableIn::Workbook(b)
+                } else {
+                    TableIn::Csv(b)
+                };
                 if f.field == "csv" {
                     inp.products = Some(b);
                 } else {
@@ -2137,6 +2264,9 @@ async fn load_inputs(app: &App, p: &ImportPayload) -> Result<Inputs> {
     Ok(inp)
 }
 
+/// The error of [`open_image`] for an image above the upload limit.
+const TOO_LARGE: &str = "payload_too_large";
+
 async fn open_image(app: &App, src: &Source) -> std::result::Result<Bytes, String> {
     match src {
         Source::Blob { key } => app
@@ -2148,16 +2278,15 @@ async fn open_image(app: &App, src: &Source) -> std::result::Result<Bytes, Strin
         Source::Zip { path, index } => {
             let (path, index) = (path.clone(), *index);
             tokio::task::spawn_blocking(move || {
-                use std::io::Read;
                 let f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-                let mut z = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
-                let mut e = z.by_index(index).map_err(|e| e.to_string())?;
-                let mut b = Vec::new();
-                e.by_ref()
-                    .take(MAX_UPLOAD_BYTES + 1)
-                    .read_to_end(&mut b)
-                    .map_err(|e| e.to_string())?;
-                Ok(Bytes::from(b))
+                let mut z =
+                    fmt::ZipPackage::open(f, fmt::PACKAGE_LIMITS).map_err(|e| e.to_string())?;
+                // One byte over the upload limit, so the caller reports it.
+                match z.read(index, MAX_UPLOAD_BYTES + 1) {
+                    Ok(b) => Ok(Bytes::from(b)),
+                    Err(fmt::ZipError::TooLarge(_)) => Err(TOO_LARGE.to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
             })
             .await
             .map_err(|e| e.to_string())?
@@ -2222,6 +2351,18 @@ async fn prepare_images(app: &App, st: &mut State_, plan: &mut ProductPlan) {
         } else {
             let data = match open_image(app, &ip.src.src).await {
                 Ok(d) => d,
+                Err(e) if e == TOO_LARGE => {
+                    st.add(
+                        &base,
+                        0,
+                        "",
+                        "payload_too_large",
+                        "The file is larger than 104857600 bytes.",
+                        "",
+                        false,
+                    );
+                    continue;
+                }
                 Err(e) => {
                     st.add(
                         &base,
@@ -2286,26 +2427,16 @@ async fn run(
 ) -> (State_, Option<Problem>) {
     let mut products_table = None;
     if let Some(b) = &inp.products {
-        match fmt::parse_csv(b) {
+        match im.st.load_table("products", b) {
             Ok(t) => products_table = Some(t),
-            Err(e) => {
-                return (
-                    im.st,
-                    Some(Problem::new("import_invalid", format!("products.csv: {e}"))),
-                );
-            }
+            Err(p) => return (im.st, Some(p)),
         }
     }
     let mut assets_table = None;
     if let Some(b) = &inp.assets {
-        match fmt::parse_csv(b) {
+        match im.st.load_table("assets", b) {
             Ok(t) => assets_table = Some(t),
-            Err(e) => {
-                return (
-                    im.st,
-                    Some(Problem::new("import_invalid", format!("assets.csv: {e}"))),
-                );
-            }
+            Err(p) => return (im.st, Some(p)),
         }
     }
     let images = inp.images;
@@ -2465,7 +2596,52 @@ pub async fn run_import_job(
     app: &App,
     j: &Job,
 ) -> std::result::Result<Option<Value>, (Option<Value>, String)> {
-    let p: ImportPayload = serde_json::from_str(&j.payload).map_err(|e| (None, e.to_string()))?;
+    let mut p: ImportPayload =
+        serde_json::from_str(&j.payload).map_err(|e| (None, e.to_string()))?;
+    if !p.source_id.is_empty() && p.files.is_empty() {
+        let fetched = crate::sources::fetch_source(app, &j.id, &mut p).await;
+        let (id, payload) = (j.id.clone(), serde_json::to_string(&p).unwrap_or_default());
+        let _ = app
+            .db
+            .write(move |tx| {
+                tx.execute(
+                    "UPDATE jobs SET payload = ? WHERE id = ?",
+                    rusqlite::params![payload, id],
+                )?;
+                Ok(())
+            })
+            .await;
+        let base = ImportResult {
+            mode: if p.options.mode.is_empty() {
+                "upsert".into()
+            } else {
+                p.options.mode.clone()
+            },
+            dry_run: p.options.dry_run,
+            ..Default::default()
+        };
+        match fetched {
+            Err(prob) => {
+                let detail = problem_detail(&prob);
+                let res = ImportResult {
+                    error: Some(serde_json::to_value(&prob).unwrap_or(Value::Null)),
+                    ..base
+                };
+                return Err((
+                    Some(serde_json::to_value(&res).unwrap_or(Value::Null)),
+                    detail,
+                ));
+            }
+            Ok(true) => {
+                let res = ImportResult {
+                    unchanged: true,
+                    ..base
+                };
+                return Ok(Some(serde_json::to_value(&res).unwrap_or(Value::Null)));
+            }
+            Ok(false) => {}
+        }
+    }
     let lang = app
         .settings()
         .await
@@ -2520,7 +2696,12 @@ pub async fn run_import_job(
                 detail,
             ))
         }
-        None => Ok(Some(serde_json::to_value(&res).unwrap_or(Value::Null))),
+        None => {
+            if !p.source_id.is_empty() && !p.options.dry_run {
+                crate::sources::record_fingerprint(app, &p.source_id, &p.fingerprint).await;
+            }
+            Ok(Some(serde_json::to_value(&res).unwrap_or(Value::Null)))
+        }
     }
 }
 
@@ -2557,6 +2738,9 @@ pub async fn import_run_json(app: &App, j: &Job) -> Result<Value> {
         "started_at": j.started_at, "finished_at": j.finished_at, "files": res.files,
         "counts": res.counts, "error": null, "errors_preview": [],
     });
+    if res.unchanged {
+        out["x-node-rs-unchanged"] = json!(true);
+    }
     if let Some(e) = res.error {
         out["error"] = e;
     } else if j.status == "failed" {
@@ -2584,7 +2768,7 @@ pub async fn import_run_json(app: &App, j: &Job) -> Result<Value> {
 
 // ---- HTTP -------------------------------------------------------------------------------
 
-fn sanitize_filename(s: &str) -> String {
+pub fn sanitize_filename(s: &str) -> String {
     let base = base_name(s);
     let out: String = base
         .chars()
@@ -2780,6 +2964,7 @@ async fn enqueue(
         options: req.options,
         allowed,
         can_delete,
+        ..Default::default()
     };
     jobs::create(
         app,

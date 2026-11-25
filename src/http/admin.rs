@@ -2447,35 +2447,3 @@ pub async fn me_patch(
         .await?;
     Ok(ok(&out))
 }
-
-// ---- scheduled imports (URL policy only, for now) ----------------------------------------
-
-pub async fn empty_list(State(app): State<App>, method: Method, headers: HeaderMap) -> Res {
-    admin_guard(&app, &headers, &method, "admin").await?;
-    Ok(ok(&json!({"items": [], "next_cursor": null})))
-}
-
-/// POST /admin/api/import-sources: the URL is checked (unsafe_url); saving
-/// scheduled imports is not implemented yet.
-pub async fn import_source_create(
-    State(app): State<App>,
-    method: Method,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Res {
-    admin_guard(&app, &headers, &method, "admin").await?;
-    let b = read_json_object(&headers, &body)?;
-    let url = b
-        .get("config")
-        .and_then(|c| c.get("url"))
-        .and_then(|u| u.as_str())
-        .unwrap_or("")
-        .to_string();
-    if !url.is_empty() {
-        crate::safeurl::check(&url, app.cfg.allow_private_urls).await?;
-    }
-    Err(Problem::new(
-        "not_implemented",
-        "Scheduled imports are not available in this release yet; upload files under Imports.",
-    ))
-}

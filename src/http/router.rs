@@ -467,9 +467,24 @@ pub fn router(app: App) -> Router {
             "/admin/api/settings/images/{id}",
             axum::routing::delete(crate::branding::image_delete),
         )
+        // lane C: scheduled imports
         .route(
             "/admin/api/import-sources",
-            get(admin::empty_list).post(admin::import_source_create),
+            get(crate::sources::h_list).post(crate::sources::h_create),
+        )
+        .route(
+            "/admin/api/import-sources/{id}",
+            get(crate::sources::h_get)
+                .patch(crate::sources::h_patch)
+                .delete(crate::sources::h_delete),
+        )
+        .route(
+            "/admin/api/import-sources/{id}/run",
+            post(crate::sources::h_run),
+        )
+        .route(
+            "/admin/api/import-sources/{id}/test",
+            post(crate::sources::h_test),
         )
         // lane A: e-mail, people, personal data, audit log, metrics
         .route("/metrics", get(crate::metrics::handler))

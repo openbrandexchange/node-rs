@@ -1,0 +1,51 @@
+# cargo deny check: licences, advisories, bans and sources of every crate in
+# the workspace (CI job "deny"). node-rs is AGPL-3.0-only, the obx-*
+# library crates are Apache-2.0; every dependency must be under a licence
+# both can include.
+
+[graph]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # quick-xml 0.38 inside object_store 0.12 (S3 list responses). Our own
+    # XML (Excel workbooks) uses quick-xml 0.42, which is fixed. Moving to
+    # object_store 0.14 also needs reqwest 0.13 across the node; until
+    # then the only XML it parses comes from the blob store or the S3
+    # import source the brand configured itself.
+    { id = "RUSTSEC-2026-0194", reason = "object_store 0.12 only; XML from the operator's own S3 endpoint" },
+    { id = "RUSTSEC-2026-0195", reason = "object_store 0.12 only; XML from the operator's own S3 endpoint" },
+    # chrono is used by every crate and by object_store; no maintained
+    # drop-in exists yet (time zones already moved to jiff).
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained, no known vulnerability; used throughout and by object_store" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "AGPL-3.0-only",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "MIT-0",
+    # webpki-roots (Mozilla's root certificates as data)
+    "CDLA-Permissive-2.0",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

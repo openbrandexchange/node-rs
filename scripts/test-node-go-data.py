@@ -1,6 +1,10 @@
 """node-go -> node-rs: node-rs runs on a node-go data folder as it is.
 
-    python3 scripts/test-node-go-data.py NODE_GO_BINARY NODE_RS_BINARY
+    python3 scripts/test-node-go-data.py NODE_GO_BINARY NODE_RS_BINARY [POSTGRES_URL]
+
+With POSTGRES_URL, node-go runs on that (empty) PostgreSQL database and
+`node-rs import-postgres` copies it into the data folder first; the
+checks are the same.
 
 node-go sets up a node, creates a retailer with an API key and imports the
 MAISON NOOR fixtures; then node-rs starts on the same folder and must accept
@@ -10,14 +14,17 @@ and serve the same products.
 import base64, http.cookiejar, json, os, subprocess, sys, tempfile, time, urllib.parse, urllib.request, urllib.error
 
 GO, RS = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
+PG = sys.argv[3] if len(sys.argv) > 3 else None
 FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "crates", "obx-conformance", "fixtures", "maison-noor")
 PORT = 18433
 BASE = f"http://127.0.0.1:{PORT}"
 D = tempfile.mkdtemp()
 ENV = dict(os.environ, OBX_DATA_DIR=D, PORT=str(PORT), OBX_PUBLIC_URL=BASE, OBX_SETUP_CODE="COMPAT-CODE-1234", OBX_LOG_LEVEL="warn")
+ENV.pop("OBX_DATABASE_URL", None)
+GO_ENV = dict(ENV, OBX_DATABASE_URL=PG) if PG else ENV
 
 def start(binary):
-    p = subprocess.Popen([binary, "serve"], env=ENV, stdout=open(os.path.join(D, os.path.basename(binary) + ".log"), "ab"), stderr=subprocess.STDOUT)
+    p = subprocess.Popen([binary, "serve"], env=GO_ENV if binary == GO else ENV, stdout=open(os.path.join(D, os.path.basename(binary) + ".log"), "ab"), stderr=subprocess.STDOUT)
     for _ in range(100):
         try:
             urllib.request.urlopen(BASE + "/healthz", timeout=1); return p
@@ -51,7 +58,7 @@ st, ret = call("POST", "/admin/api/retailers", {"name": "Compat retailer"}); ass
 st, cl = call("POST", "/admin/api/api-clients", {"retailer_id": ret["id"], "name": "compat", "scopes": ["catalog:read", "media:read", "media:original"]}); assert st == 201, cl
 cid, secret = cl["client"]["client_id"], cl["client_secret"]
 go.terminate(); go.wait()
-subprocess.run([GO, "import", "--csv", f"{FIX}/products.csv", "--assets", f"{FIX}/assets.csv", "--images", f"{FIX}/images"], env=ENV, check=True, capture_output=True)
+subprocess.run([GO, "import", "--csv", f"{FIX}/products.csv", "--assets", f"{FIX}/assets.csv", "--images", f"{FIX}/images"], env=GO_ENV, check=True, capture_output=True)
 go = start(GO)
 time.sleep(2)
 
@@ -74,6 +81,13 @@ n_go, cursor_go = snapshot(tok_go)
 st, prod_go = call("GET", "/obx/v1/products?limit=100", headers={"Authorization": "Bearer " + tok_go}, opener=urllib.request.build_opener())
 go.terminate(); go.wait()
 
+if PG:
+    assert not os.path.exists(os.path.join(D, "obx.db")), "node-go wrote SQLite although OBX_DATABASE_URL is PostgreSQL"
+    out = subprocess.run([RS, "import-postgres", "--from", PG], env=ENV, capture_output=True, text=True)
+    print(out.stdout + out.stderr)
+    assert out.returncode == 0, "import-postgres failed"
+    again = subprocess.run([RS, "import-postgres", "--from", PG], env=ENV, capture_output=True, text=True)
+    assert again.returncode != 0 and "exists" in again.stderr, "a second copy must refuse the existing database"
 rs = start(RS)
 try:
     res = {}

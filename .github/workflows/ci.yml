@@ -104,6 +104,34 @@ jobs:
       - name: node-rs runs on a node-go data folder
         run: python3 -I scripts/test-node-go-data.py /tmp/node-go-bin target/debug/node-rs
 
+  node-go-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: obx
+          POSTGRES_PASSWORD: obx
+          POSTGRES_DB: obx
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U obx" --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Build node-rs
+        run: cargo build --locked
+      - name: Build node-go (main)
+        run: |
+          git clone --depth 1 https://github.com/openbrandexchange/node-go /tmp/node-go
+          (cd /tmp/node-go && go build -o /tmp/node-go-bin .)
+      - name: node-go on PostgreSQL, copied with node-rs import-postgres
+        run: python3 -I scripts/test-node-go-data.py /tmp/node-go-bin target/debug/node-rs "postgres://obx:obx@127.0.0.1:5432/obx?sslmode=disable"
+
   docker:
     runs-on: ubuntu-latest
     steps:
@@ -116,3 +144,26 @@ jobs:
           for i in $(seq 1 50); do curl -fsS http://localhost:8080/healthz && break; sleep 0.2; done
           curl -fsS http://localhost:8080/admin/api/setup | grep -q '"required":true'
           docker logs node-rs-ci 2>&1 | grep -q 'setup code'
+
+  sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: sshd for the SFTP source
+        run: sudo apt-get install -y --no-install-recommends openssh-server
+      - name: Build node-rs
+        run: cargo build --locked
+      - name: Scheduled imports (https, SFTP, S3)
+        run: python3 -I scripts/test-sources.py target/debug/node-rs
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Licences, advisories, bans and sources (deny.toml)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --workspace
