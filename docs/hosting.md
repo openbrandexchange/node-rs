@@ -8,8 +8,8 @@ Before you start: a server (any VPS with 1 GB of memory is enough for a start) a
 
 ```sh
 # 1. The binary (from the latest release)
-curl -fsSLO https://github.com/openbrandexchange/node-rs/releases/latest/download/node-rs-$(uname -m)-linux.tar.gz
-tar xzf node-rs-$(uname -m)-linux.tar.gz && sudo install node-rs /usr/local/bin/
+curl -fsSL https://github.com/openbrandexchange/node-rs/releases/latest/download/node-rs-$(uname -m)-linux.tar.gz | tar -xz node-rs
+sudo install node-rs /usr/local/bin/
 
 # 2. A system user and the service
 sudo useradd --system --home /var/lib/node-rs --create-home --shell /usr/sbin/nologin node-rs

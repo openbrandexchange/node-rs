@@ -26,7 +26,7 @@ jobs:
       - name: Package
         run: |
           mkdir pkg && cp target/release/node-rs LICENSE NOTICE README.md pkg/
-          tar czf node-rs-${{ matrix.arch }}-linux.tar.gz -C pkg .
+          tar czf node-rs-${{ matrix.arch }}-linux.tar.gz -C pkg node-rs LICENSE NOTICE README.md
           sha256sum node-rs-${{ matrix.arch }}-linux.tar.gz > node-rs-${{ matrix.arch }}-linux.tar.gz.sha256
       - uses: softprops/action-gh-release@v2
         with:
