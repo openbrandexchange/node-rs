@@ -139,7 +139,8 @@ pub struct IngestScript {
     pub operations: Vec<Operation>,
     pub expected: Vec<Expected>,
     pub changes: Vec<ExpectedChange>,
-    /// (sha256, bytes) of every image the script references.
+    /// (sha256, bytes) of every image the script references (the images of
+    /// `ingest/files/`, not its `files.json` index).
     pub blobs: Vec<(String, Vec<u8>)>,
 }
 
@@ -159,6 +160,7 @@ impl IngestScript {
                 .expect("expected changes");
         let blobs = files("ingest/files/")
             .into_iter()
+            .filter(|p| !p.ends_with(".json"))
             .map(|p| {
                 let b = file(&p).unwrap_or_default().into_owned();
                 (hex::encode(Sha256::digest(&b)), b)
@@ -178,8 +180,8 @@ pub trait IngestTarget {
     /// Stores a blob (`PUT /obx/v1/ingest/blobs/{sha256}`).
     fn put_blob(&mut self, sha256: &str, bytes: &[u8]) -> Result<(), String>;
     /// Applies one operation; the IngestResult `result` (`created`,
-    /// `updated`, `unchanged`, `deleted`, `failed`) and the `obx_error` of a
-    /// failure. Waiting for server renditions is the target's business.
+    /// `updated`, `unchanged`, `deleted`, or `error` for a refused
+    /// operation) and the `obx_error` of a refusal. Waiting for server renditions is the target's business.
     fn apply(&mut self, op: &Operation) -> Result<(String, Option<String>), String>;
     /// The live change entries (type, op, external_id) since the previous
     /// call (the first call drains the snapshot and returns nothing).

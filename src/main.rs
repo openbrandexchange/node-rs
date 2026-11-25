@@ -28,7 +28,11 @@ mod settings;
 mod stats;
 mod store;
 #[cfg(test)]
+mod testkit;
+#[cfg(test)]
 mod tests_exports_webhooks;
+#[cfg(test)]
+mod tests_integration;
 mod uploads;
 mod usage;
 mod usage_proto;

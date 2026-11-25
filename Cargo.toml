@@ -51,6 +51,8 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 rustls-native-certs = "0.8"
 
 [dev-dependencies]
+obx-client = { path = "crates/obx-client" }
+obx-conformance = { path = "crates/obx-conformance" }
 tower = { version = "0.5", features = ["util"] }
 
 [profile.release]

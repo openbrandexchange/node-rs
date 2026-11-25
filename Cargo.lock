@@ -1494,6 +1494,8 @@ dependencies = [
  "object_store",
  "obx-auth",
  "obx-axum",
+ "obx-client",
+ "obx-conformance",
  "obx-feed",
  "obx-ingest",
  "obx-sign",
