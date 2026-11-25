@@ -19,6 +19,7 @@ mod safeurl;
 mod schemas;
 mod secure;
 mod settings;
+mod sources;
 mod store;
 mod uploads;
 
@@ -304,6 +305,7 @@ async fn main() -> ExitCode {
                 }
             };
             jobs::start_workers(a.clone());
+            sources::start_scheduler(a.clone());
             let listener = match tokio::net::TcpListener::bind(SocketAddr::new(bind, port)).await {
                 Ok(l) => l,
                 Err(e) => {

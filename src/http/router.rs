@@ -289,9 +289,24 @@ pub fn router(app: App) -> Router {
         .route("/admin/api/stats", get(admin::stats))
         .route("/admin/api/me", axum::routing::patch(admin::me_patch))
         .route("/admin/api/portal/viewer", get(admin::portal_viewer))
+        // lane C: scheduled imports
         .route(
             "/admin/api/import-sources",
-            get(admin::empty_list).post(admin::import_source_create),
+            get(crate::sources::h_list).post(crate::sources::h_create),
+        )
+        .route(
+            "/admin/api/import-sources/{id}",
+            get(crate::sources::h_get)
+                .patch(crate::sources::h_patch)
+                .delete(crate::sources::h_delete),
+        )
+        .route(
+            "/admin/api/import-sources/{id}/run",
+            post(crate::sources::h_run),
+        )
+        .route(
+            "/admin/api/import-sources/{id}/test",
+            post(crate::sources::h_test),
         )
         .route(
             "/admin/api/webhooks",

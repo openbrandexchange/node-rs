@@ -98,6 +98,15 @@ pub struct ImportPayload {
     pub allowed: Option<Vec<String>>,
     #[serde(default)]
     pub can_delete: bool,
+    /// The ImportSource of a scheduled or pull run (its files are fetched
+    /// when the job starts).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_id: String,
+    /// Run even when the remote files did not change.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub fingerprint: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -114,6 +123,15 @@ pub struct Counts {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ImportResult {
+    /// A source run skipped because its files did not change (node-go
+    /// wrote x-node-go-unchanged).
+    #[serde(
+        default,
+        rename = "x-node-rs-unchanged",
+        alias = "x-node-go-unchanged",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    unchanged: bool,
     #[serde(default)]
     mode: String,
     #[serde(default)]
@@ -2571,7 +2589,52 @@ pub async fn run_import_job(
     app: &App,
     j: &Job,
 ) -> std::result::Result<Option<Value>, (Option<Value>, String)> {
-    let p: ImportPayload = serde_json::from_str(&j.payload).map_err(|e| (None, e.to_string()))?;
+    let mut p: ImportPayload =
+        serde_json::from_str(&j.payload).map_err(|e| (None, e.to_string()))?;
+    if !p.source_id.is_empty() && p.files.is_empty() {
+        let fetched = crate::sources::fetch_source(app, &j.id, &mut p).await;
+        let (id, payload) = (j.id.clone(), serde_json::to_string(&p).unwrap_or_default());
+        let _ = app
+            .db
+            .write(move |tx| {
+                tx.execute(
+                    "UPDATE jobs SET payload = ? WHERE id = ?",
+                    rusqlite::params![payload, id],
+                )?;
+                Ok(())
+            })
+            .await;
+        let base = ImportResult {
+            mode: if p.options.mode.is_empty() {
+                "upsert".into()
+            } else {
+                p.options.mode.clone()
+            },
+            dry_run: p.options.dry_run,
+            ..Default::default()
+        };
+        match fetched {
+            Err(prob) => {
+                let detail = problem_detail(&prob);
+                let res = ImportResult {
+                    error: Some(serde_json::to_value(&prob).unwrap_or(Value::Null)),
+                    ..base
+                };
+                return Err((
+                    Some(serde_json::to_value(&res).unwrap_or(Value::Null)),
+                    detail,
+                ));
+            }
+            Ok(true) => {
+                let res = ImportResult {
+                    unchanged: true,
+                    ..base
+                };
+                return Ok(Some(serde_json::to_value(&res).unwrap_or(Value::Null)));
+            }
+            Ok(false) => {}
+        }
+    }
     let lang = app
         .settings()
         .await
@@ -2626,7 +2689,12 @@ pub async fn run_import_job(
                 detail,
             ))
         }
-        None => Ok(Some(serde_json::to_value(&res).unwrap_or(Value::Null))),
+        None => {
+            if !p.source_id.is_empty() && !p.options.dry_run {
+                crate::sources::record_fingerprint(app, &p.source_id, &p.fingerprint).await;
+            }
+            Ok(Some(serde_json::to_value(&res).unwrap_or(Value::Null)))
+        }
     }
 }
 
@@ -2663,6 +2731,9 @@ pub async fn import_run_json(app: &App, j: &Job) -> Result<Value> {
         "started_at": j.started_at, "finished_at": j.finished_at, "files": res.files,
         "counts": res.counts, "error": null, "errors_preview": [],
     });
+    if res.unchanged {
+        out["x-node-rs-unchanged"] = json!(true);
+    }
     if let Some(e) = res.error {
         out["error"] = e;
     } else if j.status == "failed" {
@@ -2690,7 +2761,7 @@ pub async fn import_run_json(app: &App, j: &Job) -> Result<Value> {
 
 // ---- HTTP -------------------------------------------------------------------------------
 
-fn sanitize_filename(s: &str) -> String {
+pub fn sanitize_filename(s: &str) -> String {
     let base = base_name(s);
     let out: String = base
         .chars()
@@ -2886,6 +2957,7 @@ async fn enqueue(
         options: req.options,
         allowed,
         can_delete,
+        ..Default::default()
     };
     jobs::create(
         app,
