@@ -6,6 +6,7 @@ mod app;
 mod article;
 mod audit;
 mod backup;
+mod branding;
 mod catalog;
 mod config;
 mod db;
@@ -37,6 +38,7 @@ mod usage;
 mod usage_proto;
 mod webhook_proto;
 mod webhooks;
+mod zipout;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

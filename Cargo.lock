@@ -2071,6 +2071,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
+ "crc32fast",
  "futures",
  "hex",
  "hmac 0.12.1",

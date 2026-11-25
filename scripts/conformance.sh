@@ -2,6 +2,7 @@
 # Runs the OBX conformance suite (obx-conformance from obx-go) against a
 # fresh node-rs: setup with a known code, the MAISON NOOR fixtures, every
 # profile. The report is written to conformance-report.json.
+# CONFORMANCE_ARGS adds options, e.g. CONFORMANCE_ARGS=--rate-limit-test.
 #
 #   scripts/conformance.sh [profile]        profile: all (default), protocol, ingest, portal, security
 #
@@ -31,7 +32,7 @@ until curl -fsS -m 2 "http://127.0.0.1:$PORT/healthz" > /dev/null 2>&1; do
   sleep 0.1
 done
 set +e
-"$CONF" "$PROFILE" --url "http://127.0.0.1:$PORT" --setup-code CONF-TEST-CODE --operator-hook "$HOOK" --json > "$REPORT"
+"$CONF" "$PROFILE" --url "http://127.0.0.1:$PORT" --setup-code CONF-TEST-CODE --operator-hook "$HOOK" ${CONFORMANCE_ARGS:-} --json > "$REPORT"
 CODE=$?
 set -e
 "$CONF" report "$REPORT" || true

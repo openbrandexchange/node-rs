@@ -19,6 +19,7 @@
 //! ```
 #![forbid(unsafe_code)]
 
+pub mod appearance;
 pub mod gtin;
 pub mod ids;
 pub mod model;

@@ -17,7 +17,6 @@ pub fn blob_key(sha: &str) -> String {
     format!("blobs/{}/{}", &sha[..2.min(sha.len())], sha)
 }
 
-#[allow(dead_code)] // streaming helpers used by the portal downloads (next commit)
 impl Store {
     pub fn open(url: &str, key_id: Option<&str>, secret: Option<&str>) -> Result<Store, String> {
         if let Some(path) = url.strip_prefix("file://") {

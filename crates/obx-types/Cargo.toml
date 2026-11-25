@@ -10,7 +10,7 @@ keywords = ["obx", "open-brand-exchange", "product-data", "fashion", "pim"]
 categories = ["data-structures", "encoding"]
 description = "Open Brand Exchange (OBX) types: objects, problem documents, ids, GTINs, vocabularies and JSON Schema validation"
 readme = "README.md"
-include = ["src/**", "spec/**", "README.md", "LICENSE"]
+include = ["src/**", "spec/**", "tests/**", "README.md", "LICENSE"]
 
 [features]
 default = ["validate"]

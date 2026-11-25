@@ -253,6 +253,7 @@ async fn run_job(app: &App, j: Job) {
             "batch" => run_batch_job(app, &j).await,
             "import" => crate::imports::run_import_job(app, &j).await,
             "export" => crate::exports::run_export_job(app, &j).await,
+            "download" => crate::http::portal_downloads::run_download_job(app, &j).await,
             k => Err((None, format!("unknown job kind {k}"))),
         }
     };
