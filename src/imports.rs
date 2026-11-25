@@ -3122,6 +3122,7 @@ mod tests {
             workers: 1,
             change_retention_days: 400,
             job_retention_days: 30,
+            webhook_log_retention_days: 8,
             mail_from: "no-reply@example.test".into(),
             mail_log_bodies: false,
             log_format: "text".into(),

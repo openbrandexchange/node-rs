@@ -821,31 +821,37 @@ fn apply_settings_patch(cur: &Settings, mut patch: Map<String, Value>) -> Result
 pub async fn save_settings(app: &App, cur: Settings, next: Settings) -> Result<()> {
     let rights_changed = to_json(&cur.defaults.rights) != to_json(&next.defaults.rights);
     let orig_changed = cur.portal.allow_original_download != next.portal.allow_original_download;
-    app.catalog_write(None, move |w| {
-        next.save(w.tx)?;
-        w.settings = next;
-        if rights_changed {
-            w.recompute_all_assets()?;
-        }
-        if orig_changed {
-            let ids: Vec<String> = {
-                let mut st =
-                    w.tx.prepare("SELECT id FROM retailers WHERE status = 'active'")?;
-
-                st.query_map([], |r| r.get(0))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?
-            };
-            for id in ids {
-                w.tx.execute(
-                    "UPDATE retailers SET grant_updated_at = ? WHERE id = ?",
-                    params![w.now, id],
-                )?;
-                w.emit_grant(&id, true)?;
+    let retailers = app
+        .catalog_write(None, move |w| {
+            next.save(w.tx)?;
+            w.settings = next;
+            if rights_changed {
+                w.recompute_all_assets()?;
             }
-        }
-        Ok(())
-    })
-    .await
+            if orig_changed {
+                let ids: Vec<String> = {
+                    let mut st =
+                        w.tx.prepare("SELECT id FROM retailers WHERE status = 'active'")?;
+
+                    st.query_map([], |r| r.get(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?
+                };
+                for id in &ids {
+                    w.tx.execute(
+                        "UPDATE retailers SET grant_updated_at = ? WHERE id = ?",
+                        params![w.now, id],
+                    )?;
+                    w.emit_grant(id, true)?;
+                }
+                return Ok(ids);
+            }
+            Ok(vec![])
+        })
+        .await?;
+    for id in retailers {
+        crate::webhooks::retailer_grant_event(app, &id);
+    }
+    Ok(())
 }
 
 pub async fn settings_patch(
@@ -1475,9 +1481,13 @@ pub async fn retailer_patch(
                 w.emit_grant(&ret.id, grant_changed)?;
             }
             let r = load_retailer(w.tx, &ret.id)?.unwrap();
-            retailer_json(w.tx, &r)
+            Ok((retailer_json(w.tx, &r)?, grant_changed.then(|| r.id.clone())))
         })
         .await?;
+    let (out, grant_changed) = out;
+    if let Some(id) = grant_changed {
+        crate::webhooks::retailer_grant_event(&app, &id);
+    }
     Ok(ok(&out))
 }
 
@@ -2404,7 +2414,7 @@ pub async fn portal_viewer(State(app): State<App>, method: Method, headers: Head
     Ok(ok(&out))
 }
 
-// ---- scheduled imports and brand webhooks (URL policy only, for now) --------------------
+// ---- scheduled imports (URL policy only, for now) ----------------------------------------
 
 pub async fn empty_list(State(app): State<App>, method: Method, headers: HeaderMap) -> Res {
     admin_guard(&app, &headers, &method, "admin").await?;
@@ -2433,27 +2443,5 @@ pub async fn import_source_create(
     Err(Problem::new(
         "not_implemented",
         "Scheduled imports are not available in this release yet; upload files under Imports.",
-    ))
-}
-
-/// POST /admin/api/webhooks: the URL is checked (unsafe_url); brand
-/// webhooks are not implemented yet.
-pub async fn brand_webhook_create(
-    State(app): State<App>,
-    method: Method,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Res {
-    admin_guard(&app, &headers, &method, "admin").await?;
-    let b = read_json_object(&headers, &body)?;
-    let url = b
-        .get("url")
-        .and_then(|u| u.as_str())
-        .unwrap_or("")
-        .to_string();
-    crate::safeurl::check(&url, app.cfg.allow_private_urls).await?;
-    Err(Problem::new(
-        "not_implemented",
-        "Webhooks are not available in this release yet.",
     ))
 }

@@ -16,6 +16,7 @@ Environment variables, checked at start (`node-rs check-config` checks without s
 | `OBX_TRUST_PROXY` | `false` | Take the client address from `X-Forwarded-For` (behind Caddy or a load balancer). |
 | `OBX_WORKERS` | `2` | Background workers for imports and batches. |
 | `OBX_CHANGE_RETENTION_DAYS` | `400` (90–36500) | How long the change history is kept. |
+| `OBX_WEBHOOK_LOG_RETENTION_DAYS` | `8` (1–365) | How long webhook delivery logs are kept. |
 | `OBX_LOG_FORMAT`, `OBX_LOG_LEVEL` | `text` (`json` in Docker), `info` | Logs go to standard error. |
-| `OBX_ALLOW_PRIVATE_URLS` | `false` | Development only. |
+| `OBX_ALLOW_PRIVATE_URLS` | `false` | Development only: allows http:// and private addresses for webhook and import URLs (link-local stays blocked). |
 | `OBX_TEST_RATE_LIMIT` | not set | Conformance testing only: a lower per-minute API limit. |

@@ -37,6 +37,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 url = "2"
 mime_guess = "2"
 multer = "3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
 
 [profile.release]
 lto = "thin"

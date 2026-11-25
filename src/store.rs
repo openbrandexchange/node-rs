@@ -79,7 +79,6 @@ impl Store {
         }
     }
 
-    #[allow(dead_code)] // range reads straight from the store (roadmap: large originals)
     pub async fn get_range(&self, key: &str, range: std::ops::Range<u64>) -> Result<Bytes, String> {
         self.inner
             .get_range(&self.path(key), range)
@@ -87,8 +86,82 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
+    /// Uploads a local file in 8 MiB parts (exports and downloads can be
+    /// gigabytes; they never sit in memory as a whole).
+    pub async fn put_file(&self, key: &str, path: &std::path::Path) -> Result<u64, String> {
+        use tokio::io::AsyncReadExt;
+        let mut f = tokio::fs::File::open(path)
+            .await
+            .map_err(|e| e.to_string())?;
+        let up = self
+            .inner
+            .put_multipart(&self.path(key))
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut w = object_store::WriteMultipart::new(up);
+        let mut buf = vec![0u8; 8 << 20];
+        let mut total = 0u64;
+        loop {
+            let n = f.read(&mut buf).await.map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            total += n as u64;
+            w.wait_for_capacity(4).await.map_err(|e| e.to_string())?;
+            w.write(&buf[..n]);
+        }
+        w.finish().await.map_err(|e| e.to_string())?;
+        Ok(total)
+    }
+
+    /// The size of a stored object, None when it does not exist.
+    pub async fn size(&self, key: &str) -> Result<Option<u64>, String> {
+        match self.inner.head(&self.path(key)).await {
+            Ok(m) => Ok(Some(m.size)),
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// A stored object as a stream of chunks.
+    pub async fn get_stream(
+        &self,
+        key: &str,
+    ) -> Result<Option<futures::stream::BoxStream<'static, Result<Bytes, std::io::Error>>>, String>
+    {
+        use futures::StreamExt;
+        match self.inner.get(&self.path(key)).await {
+            Ok(r) => Ok(Some(
+                r.into_stream()
+                    .map(|c| c.map_err(std::io::Error::other))
+                    .boxed(),
+            )),
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     pub async fn exists(&self, key: &str) -> bool {
         self.inner.head(&self.path(key)).await.is_ok()
+    }
+
+    /// Deletes every object under a key prefix (an export's files).
+    pub async fn delete_prefix(&self, prefix: &str) -> Result<(), String> {
+        use futures::TryStreamExt;
+        let base = self.path(prefix.trim_end_matches('/'));
+        let metas: Vec<_> = self
+            .inner
+            .list(Some(&base))
+            .try_collect()
+            .await
+            .map_err(|e| e.to_string())?;
+        for m in metas {
+            match self.inner.delete(&m.location).await {
+                Ok(()) | Err(object_store::Error::NotFound { .. }) => {}
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        Ok(())
     }
 
     pub async fn delete(&self, key: &str) -> Result<(), String> {

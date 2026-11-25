@@ -45,6 +45,8 @@ pub struct Inner {
     pub changed: Notify,
     /// Woken when a job is queued.
     pub jobs: Notify,
+    /// Woken when webhook deliveries are queued.
+    pub webhooks_due: Notify,
     limiter: Mutex<HashMap<String, (i64, u32)>>,
     rendering: Mutex<std::collections::HashSet<String>>,
 }
@@ -134,6 +136,7 @@ impl App {
             render_tx,
             changed: Notify::new(),
             jobs: Notify::new(),
+            webhooks_due: Notify::new(),
             limiter: Mutex::new(HashMap::new()),
             rendering: Mutex::new(Default::default()),
         }));

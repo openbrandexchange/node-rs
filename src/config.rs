@@ -24,6 +24,7 @@ pub struct Config {
     pub workers: usize,
     pub change_retention_days: i64,
     pub job_retention_days: i64,
+    pub webhook_log_retention_days: i64,
     pub mail_from: String,
     pub mail_log_bodies: bool,
     pub log_format: String,
@@ -46,6 +47,7 @@ const KNOWN: &[&str] = &[
     "OBX_SECRET_KEY",
     "OBX_SETUP_CODE",
     "OBX_ALLOW_PRIVATE_URLS",
+    "OBX_WEBHOOK_LOG_RETENTION_DAYS",
     "OBX_TRUST_PROXY",
     "OBX_WORKERS",
     "OBX_CHANGE_RETENTION_DAYS",
@@ -160,6 +162,8 @@ impl Config {
         let workers = env_int(&mut p, "OBX_WORKERS", 2, 1, 64) as usize;
         let change_retention_days = env_int(&mut p, "OBX_CHANGE_RETENTION_DAYS", 400, 90, 36500);
         let job_retention_days = env_int(&mut p, "OBX_JOB_RETENTION_DAYS", 30, 8, 36500);
+        let webhook_log_retention_days =
+            env_int(&mut p, "OBX_WEBHOOK_LOG_RETENTION_DAYS", 8, 1, 365);
         let allow_private_urls = env_bool(&mut p, "OBX_ALLOW_PRIVATE_URLS", false);
         let trust_proxy = env_bool(&mut p, "OBX_TRUST_PROXY", false);
         let mail_log_bodies = env_bool(&mut p, "OBX_MAIL_LOG_BODIES", false);
@@ -201,6 +205,7 @@ impl Config {
             workers,
             change_retention_days,
             job_retention_days,
+            webhook_log_retention_days,
             mail_from,
             mail_log_bodies,
             log_format: env("OBX_LOG_FORMAT").unwrap_or_else(|| "text".into()),

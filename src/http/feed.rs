@@ -324,6 +324,21 @@ fn live_page(
     )
 }
 
+/// A live cursor at the current high-water mark (the changes_cursor of an
+/// export manifest: reading on from it misses nothing the export lacks).
+pub fn live_cursor(app: &App, c: &Connection) -> Result<String> {
+    let hw: i64 = c.query_row("SELECT COALESCE(MAX(seq), 0) FROM changes", [], |r| {
+        r.get(0)
+    })?;
+    let cur = Cursor {
+        p: "l".into(),
+        s: hw,
+        e: cursor_epoch(c)?,
+        ..Default::default()
+    };
+    Ok(app.encode_cursor("changes", &cur))
+}
+
 /// Moves the cursor epoch, as an incompatible spec upgrade does (P-FEED-7).
 pub fn simulate_spec_upgrade(c: &Connection) -> Result<()> {
     let e = cursor_epoch(c)?;

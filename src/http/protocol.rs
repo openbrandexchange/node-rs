@@ -475,7 +475,15 @@ fn product_etag(p: &Value) -> String {
 // ---- handlers ------------------------------------------------------------------------
 
 pub fn capabilities(s: &Settings) -> Vec<&'static str> {
-    let mut c = vec!["changes", "products", "by_gtin", "renditions"];
+    let mut c = vec![
+        "changes",
+        "products",
+        "by_gtin",
+        "renditions",
+        "exports",
+        "webhooks",
+        "usage",
+    ];
     if s.portal.access_requests_enabled {
         c.push("access_requests");
     }
@@ -819,7 +827,7 @@ pub async fn by_gtin(
     Ok(with_headers(ok(&res), &hs))
 }
 
-fn visible_asset(c: &Connection, v: &Viewer, id: &str) -> Result<Option<crate::catalog::Row>> {
+pub fn visible_asset(c: &Connection, v: &Viewer, id: &str) -> Result<Option<crate::catalog::Row>> {
     let Some(r) = crate::catalog::load_row_by_id(c, KIND_ASSET, id)? else {
         return Ok(None);
     };
@@ -1018,11 +1026,4 @@ pub async fn serve_blob(
         Body::from(data)
     };
     Ok(b.body(body).unwrap())
-}
-
-pub async fn not_implemented() -> Problem {
-    Problem::new(
-        "not_implemented",
-        "This node does not offer this optional capability yet.",
-    )
 }

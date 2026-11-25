@@ -1493,6 +1493,7 @@ dependencies = [
  "obx-format",
  "rand 0.9.5",
  "regex",
+ "reqwest",
  "rusqlite",
  "rust-embed",
  "serde",
