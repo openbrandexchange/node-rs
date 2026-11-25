@@ -45,6 +45,8 @@ Everything a brand configures (company, logo, colours, languages, default image 
 
 - **Storage:** SQLite in the data folder (no database server). Images on local disk, or in any S3-compatible bucket with `OBX_BLOB_URL=s3://bucket/prefix?endpoint=https://…&region=…` and `OBX_S3_ACCESS_KEY_ID` / `OBX_S3_SECRET_ACCESS_KEY`.
 - **The secret key** (`$OBX_DATA_DIR/secret.key`, or `OBX_SECRET_KEY`) signs download links and encrypts stored secrets. Back it up with the data.
+- **E-mail** (invitations, password resets, access requests, finished downloads): set `OBX_SMTP_URL=smtp://user:password@smtp.example.com:587` and `OBX_MAIL_FROM=portal@yourbrand.com` (in the systemd override or `node-rs.env`). Without it, e-mails go to the log and the admin shows invitation links to pass on yourself.
+- **Monitoring:** `/healthz` (liveness), `/readyz` (readiness, 503 while shutting down) and, with `OBX_METRICS_TOKEN`, Prometheus metrics at `/metrics`.
 
 ## Backups
 

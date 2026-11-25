@@ -97,4 +97,34 @@ impl Store {
             .await
             .map_err(|e| e.to_string())
     }
+
+    /// Whether the store answers (readiness probe): a missing key is fine.
+    pub async fn check(&self) -> Result<(), String> {
+        match self.inner.head(&self.path("readyz-probe")).await {
+            Ok(_) | Err(object_store::Error::NotFound { .. }) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Deletes every object below a prefix ("uploads/<id>/").
+    pub async fn delete_prefix(&self, prefix: &str) -> Result<(), String> {
+        use futures::StreamExt;
+        let p = self.path(prefix.trim_end_matches('/'));
+        let mut list = self.inner.list(Some(&p));
+        let mut keys = Vec::new();
+        while let Some(m) = list.next().await {
+            match m {
+                Ok(m) => keys.push(m.location),
+                Err(object_store::Error::NotFound { .. }) => break,
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        for k in keys {
+            match self.inner.delete(&k).await {
+                Ok(()) | Err(object_store::Error::NotFound { .. }) => {}
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        Ok(())
+    }
 }

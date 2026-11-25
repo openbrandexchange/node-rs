@@ -185,6 +185,55 @@ pub async fn create(
         })
         .await?;
     tracing::info!(access_request = %id, retailer = %clean_ret["name"], "new access request");
+    {
+        let retailer = clean_ret["name"].as_str().unwrap_or("").to_string();
+        let cname = clean_contact["name"].as_str().unwrap_or("").to_string();
+        let to = clean_contact["email"].as_str().unwrap_or("").to_string();
+        let clang = clean_contact["language"]
+            .as_str()
+            .unwrap_or("en")
+            .to_string();
+        if !to.is_empty() {
+            crate::mail::send_mail_later(
+                &app,
+                to,
+                clang,
+                crate::mail::MAIL_ACCESS_REQUEST_RECEIVED,
+                vec![("name", cname.clone())],
+            );
+        }
+        let a = app.clone();
+        tokio::spawn(async move {
+            let admins = a
+                .db
+                .read(|c| {
+                    let mut st = c.prepare("SELECT email, name, language FROM users WHERE role = 'admin' AND status = 'active'")?;
+                    let r = st
+                        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok(r)
+                })
+                .await
+                .unwrap_or_default();
+            let url = format!("{}/admin/requests", a.cfg.public_url);
+            for (email, name, lang) in admins {
+                let vars = [
+                    ("name", name),
+                    ("retailer", retailer.clone()),
+                    ("contact", cname.clone()),
+                    ("url", url.clone()),
+                ];
+                crate::mail::send_mail(
+                    &a,
+                    &email,
+                    &lang,
+                    crate::mail::MAIL_ACCESS_REQUEST_NEW,
+                    &vars,
+                )
+                .await;
+            }
+        });
+    }
     Ok(json(
         202,
         &json!({"id": id, "status": "pending", "created_at": now, "decided_at": null, "reason": null, "request_token": token,
