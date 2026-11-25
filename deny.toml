@@ -36,6 +36,8 @@ allow = [
     "Zlib",
     "Unicode-3.0",
     "MIT-0",
+    # webpki-roots (Mozilla's root certificates as data)
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]

@@ -6,8 +6,9 @@
 //! so the copy is table by table, column by column:
 //!
 //! 1. the SQLite schema is built at the source's migration version;
-//! 2. every table is copied in one transaction (foreign keys checked at
-//!    the end), sequences included, so change-feed cursors continue;
+//! 2. every table is replaced by the source's rows in one transaction
+//!    (foreign keys checked at the end), sequences included, so
+//!    change-feed cursors continue;
 //! 3. the remaining migrations run, as a node-go upgrade would have;
 //! 4. row counts are compared and a foreign-key check runs.
 //!
@@ -217,6 +218,9 @@ async fn copy_into(
             quote_ident(t),
             vec!["?"; shared.len()].join(", ")
         );
+        // Rows the migrations seeded (meta, settings) come from the source.
+        tx.execute(&format!("DELETE FROM {}", quote_ident(t)), [])
+            .map_err(|e| format!("{t}: {e}"))?;
         let mut ins = tx.prepare(&insert).map_err(|e| e.to_string())?;
         let rows = pg
             .query_raw(
