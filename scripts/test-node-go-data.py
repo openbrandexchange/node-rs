@@ -10,7 +10,7 @@ and serve the same products.
 import base64, http.cookiejar, json, os, subprocess, sys, tempfile, time, urllib.parse, urllib.request, urllib.error
 
 GO, RS = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
-FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "spec", "fixtures", "maison-noor")
+FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "crates", "obx-conformance", "fixtures", "maison-noor")
 PORT = 18433
 BASE = f"http://127.0.0.1:{PORT}"
 D = tempfile.mkdtemp()
