@@ -831,10 +831,9 @@ pub async fn save_settings(app: &App, cur: Settings, next: Settings) -> Result<(
             let ids: Vec<String> = {
                 let mut st =
                     w.tx.prepare("SELECT id FROM retailers WHERE status = 'active'")?;
-                let r = st
-                    .query_map([], |r| r.get(0))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                r
+
+                st.query_map([], |r| r.get(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
             };
             for id in ids {
                 w.tx.execute(
@@ -930,11 +929,17 @@ pub async fn catalog_brands(State(app): State<App>, method: Method, headers: Hea
 
 pub async fn catalog_product(
     State(app): State<App>,
-    Path(ext): Path<String>,
+    Path((seg, ext)): Path<(String, String)>,
     method: Method,
     headers: HeaderMap,
 ) -> Res {
     admin_guard(&app, &headers, &method, "admin").await?;
+    if seg != "products" {
+        return Err(Problem::new(
+            "method_not_allowed",
+            "Read variants and assets through their product.",
+        ));
+    }
     let out = app
         .db
         .read(move |c| {
@@ -994,6 +999,11 @@ pub async fn catalog_products(
                 w.push_str(" AND search_text LIKE ?");
                 args.push(format!("%{sq}%"));
             }
+            let total: i64 = c.query_row(
+                &format!("SELECT COUNT(*) FROM products {w}"),
+                rusqlite::params_from_iter(args.iter()),
+                |r| r.get(0),
+            )?;
             if let Some(cur) = after {
                 w.push_str(" AND (style_number > ? OR (style_number = ? AND id > ?))");
                 let sn = cur["s"].as_str().unwrap_or("").to_string();
@@ -1017,7 +1027,25 @@ pub async fn catalog_products(
                 if let Some(r) = crate::catalog::load_row_by_id(c, KIND_PRODUCT, id)? {
                     let d: ProductData = serde_json::from_str(&r.data).unwrap_or_default();
                     last = Some(json!({"s": d.style_number, "i": r.id}));
-                    items.push(crate::catalog::record(c, &r, &s));
+                    let n = |q: &str| c.query_row(q, [&r.id], |x| x.get::<_, i64>(0));
+                    let vc = n("SELECT COUNT(*) FROM variants WHERE product_id = ?")?;
+                    let ac = n("SELECT COUNT(*) FROM assets WHERE product_id = ?")?;
+                    let pc = n("SELECT COUNT(*) FROM assets WHERE product_id = ? AND (pending = 1 OR live_files IS NULL)")?;
+                    let live: Option<String> = c
+                        .query_row(
+                            &format!("SELECT live_files FROM assets WHERE product_id = ? AND live_files IS NOT NULL{} LIMIT 1", crate::catalog::ASSET_ORDER),
+                            [&r.id],
+                            |x| x.get(0),
+                        )
+                        .optional()?;
+                    let thumb = live
+                        .and_then(|l| serde_json::from_str::<Value>(&l).ok())
+                        .and_then(|f| f["thumb"]["sha256"].as_str().map(|sha| format!("{}/admin/api/files/{sha}", a.cfg.public_url)));
+                    let _ = &s;
+                    items.push(json!({"id": r.id, "external_id": r.external_id, "brand_external_id": d.brand_external_id,
+                        "style_number": d.style_number, "name": d.name, "status": r.status,
+                        "visibility": if r.visible { "visible" } else { "hidden" }, "variant_count": vc, "asset_count": ac,
+                        "pending_asset_count": pc, "thumb_url": thumb, "updated_at": r.record_updated_at}));
                 }
             }
             let next = if ids.len() > limit {
@@ -1025,7 +1053,7 @@ pub async fn catalog_products(
             } else {
                 None
             };
-            Ok(json!({"items": items, "next_cursor": next}))
+            Ok(json!({"items": items, "next_cursor": next, "total": total}))
         })
         .await?;
     Ok(ok(&out))
@@ -2259,5 +2287,173 @@ pub async fn stats(State(app): State<App>, method: Method, headers: HeaderMap) -
     Ok(ok(
         &json!({"totals": {"downloads": 0, "files": 0, "bytes": 0, "retailers_active": 0}, "catalog": counts,
         "by_day": [], "top_products": [], "top_retailers": [], "by_kind": []}),
+    ))
+}
+
+// ---- the signed-in person -------------------------------------------------------------
+
+pub async fn me_patch(
+    State(app): State<App>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Res {
+    let s = admin_guard(&app, &headers, &method, "any")
+        .await?
+        .expect("session");
+    let b = read_json_object(&headers, &body)?;
+    let mut u = s.user.clone();
+    if let Some(n) = b.get("name") {
+        let n = n.as_str().unwrap_or("").trim().to_string();
+        if n.is_empty() || n.len() > 200 {
+            return Err(Problem::new("validation_failed", "A name is required."));
+        }
+        u.name = n;
+    }
+    if let Some(l) = b.get("language").and_then(|v| v.as_str()) {
+        u.language = supported_lang(l);
+    }
+    let mut new_hash = None;
+    if let Some(np) = b
+        .get("new_password")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+    {
+        let cur = b
+            .get("current_password")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let h = u.password_hash.clone().unwrap_or_default();
+        let good =
+            tokio::task::spawn_blocking(move || !h.is_empty() && secure::check_password(&h, &cur))
+                .await
+                .unwrap_or(false);
+        if !good {
+            return Err(Problem::new(
+                "invalid_credentials",
+                "Your current password is not correct.",
+            ));
+        }
+        if let Some(reason) = secure::password_problem(&np) {
+            return Err(Problem::new("validation_failed", reason).field(
+                "/new_password",
+                "validation_failed",
+                reason,
+            ));
+        }
+        new_hash = Some(
+            tokio::task::spawn_blocking(move || secure::hash_password(&np))
+                .await
+                .map_err(Problem::internal)?,
+        );
+    }
+    let csrf = s.csrf.clone();
+    let out = app
+        .db
+        .write(move |tx| {
+            if let Some(h) = new_hash {
+                tx.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    params![h, u.id],
+                )?;
+                tx.execute(
+                    "DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?",
+                    params![u.id, s.id_hash],
+                )?;
+            }
+            tx.execute(
+                "UPDATE users SET name = ?, language = ? WHERE id = ?",
+                params![u.name, u.language, u.id],
+            )?;
+            let u = load_user(tx, "id = ?", &u.id)?.unwrap();
+            session_json(tx, Some(&u), &csrf, false)
+        })
+        .await?;
+    Ok(ok(&out))
+}
+
+/// GET /admin/api/portal/viewer: who is looking at the portal and what
+/// they see (the retailer portal itself is on the roadmap).
+pub async fn portal_viewer(State(app): State<App>, method: Method, headers: HeaderMap) -> Res {
+    let s = admin_guard(&app, &headers, &method, "any")
+        .await?
+        .expect("session");
+    let base = app.cfg.public_url.clone();
+    let out = app
+        .db
+        .read(move |c| {
+            let v = viewer_for_user(c, &s.user)?;
+            let (bf, args) = v.brand_filter("id");
+            let mut st = c.prepare(&format!("SELECT rep, updated_at FROM brands WHERE visible = 1{bf} ORDER BY name"))?;
+            let brands = st
+                .query_map(rusqlite::params_from_iter(args.iter()), |r| {
+                    Ok(super::protocol::render_plain(&r.get::<_, String>(0)?, &r.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let st = Settings::load(c)?;
+            let retailer = (!v.retailer_id.is_empty()).then(|| json!({"id": v.retailer_id, "name": v.retailer_name}));
+            let logo = (!st.logo_sha.is_empty()).then(|| format!("{base}/admin/api/public/logo?v={}", &st.logo_sha[..16]));
+            Ok(json!({"preview": v.kind == "admin", "retailer": retailer, "brands": brands,
+                "original_allowed": v.original_allowed, "article_data_export": st.portal.allow_article_data_export,
+                "api_self_service": st.portal.retailer_api_self_service, "selection_count": 0,
+                "branding": {"name": st.display_name(), "logo_url": logo, "accent_color": st.branding.accent_color,
+                    "welcome_text": st.branding.welcome_text, "languages": st.content_languages()}}))
+        })
+        .await?;
+    Ok(ok(&out))
+}
+
+// ---- scheduled imports and brand webhooks (URL policy only, for now) --------------------
+
+pub async fn empty_list(State(app): State<App>, method: Method, headers: HeaderMap) -> Res {
+    admin_guard(&app, &headers, &method, "admin").await?;
+    Ok(ok(&json!({"items": [], "next_cursor": null})))
+}
+
+/// POST /admin/api/import-sources: the URL is checked (unsafe_url); saving
+/// scheduled imports is not implemented yet.
+pub async fn import_source_create(
+    State(app): State<App>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Res {
+    admin_guard(&app, &headers, &method, "admin").await?;
+    let b = read_json_object(&headers, &body)?;
+    let url = b
+        .get("config")
+        .and_then(|c| c.get("url"))
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
+    if !url.is_empty() {
+        crate::safeurl::check(&url, app.cfg.allow_private_urls).await?;
+    }
+    Err(Problem::new(
+        "not_implemented",
+        "Scheduled imports are not available in this release yet; upload files under Imports.",
+    ))
+}
+
+/// POST /admin/api/webhooks: the URL is checked (unsafe_url); brand
+/// webhooks are not implemented yet.
+pub async fn brand_webhook_create(
+    State(app): State<App>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Res {
+    admin_guard(&app, &headers, &method, "admin").await?;
+    let b = read_json_object(&headers, &body)?;
+    let url = b
+        .get("url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
+    crate::safeurl::check(&url, app.cfg.allow_private_urls).await?;
+    Err(Problem::new(
+        "not_implemented",
+        "Webhooks are not available in this release yet.",
     ))
 }

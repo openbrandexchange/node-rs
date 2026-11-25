@@ -205,7 +205,4 @@ pub mod anyhow_lite {
         }
     }
     impl std::error::Error for Error {}
-    pub fn err(e: impl std::fmt::Display) -> Error {
-        Error(e.to_string())
-    }
 }

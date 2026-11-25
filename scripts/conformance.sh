@@ -6,14 +6,14 @@
 #   scripts/conformance.sh [profile]        profile: all (default), protocol, ingest, portal, security
 #
 # Needs: a built node-rs (NODE_RS, default target/debug/node-rs) and
-# obx-conformance on PATH or OBX_CONFORMANCE (go install
+# obx-conformance on PATH or CONFORMANCE_BIN (go install
 # github.com/openbrandexchange/obx-go/cmd/obx-conformance@main).
 set -eu
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 PROFILE="${1:-all}"
 NODE_RS="${NODE_RS:-${CARGO_TARGET_DIR:-$HERE/target}/debug/node-rs}"
-CONF="${OBX_CONFORMANCE:-obx-conformance}"
-PORT="${PORT:-18080}"
+CONF="${CONFORMANCE_BIN:-obx-conformance}"
+PORT="${CONFORMANCE_PORT:-18431}"
 DATA="$(mktemp -d)"
 REPORT="${REPORT:-$HERE/conformance-report.json}"
 HOOK="$DATA/operator-hook.sh"
@@ -21,11 +21,11 @@ printf '#!/bin/sh\nexec env OBX_DATA_DIR="%s" OBX_PUBLIC_URL="http://127.0.0.1:%
 chmod +x "$HOOK"
 
 OBX_DATA_DIR="$DATA" OBX_PUBLIC_URL="http://127.0.0.1:$PORT" PORT="$PORT" OBX_SETUP_CODE=CONF-TEST-CODE \
-  OBX_ALLOW_PRIVATE_URLS=true OBX_LOG_LEVEL="${OBX_LOG_LEVEL:-warn}" "$NODE_RS" serve > "$DATA/node.log" 2>&1 &
+  OBX_LOG_LEVEL="${OBX_LOG_LEVEL:-warn}" "$NODE_RS" serve > "$DATA/node.log" 2>&1 &
 PID=$!
 trap 'kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true; rm -rf "$DATA"' EXIT
 i=0
-until curl -fsS "http://127.0.0.1:$PORT/healthz" > /dev/null 2>&1; do
+until curl -fsS -m 2 "http://127.0.0.1:$PORT/healthz" > /dev/null 2>&1; do
   i=$((i + 1))
   if [ $i -gt 100 ]; then echo "node-rs did not start:"; cat "$DATA/node.log"; exit 1; fi
   sleep 0.1

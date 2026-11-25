@@ -111,6 +111,7 @@ pub fn validate(name: &str, doc: &Value) -> Vec<FieldError> {
 }
 
 /// Errors of doc against the closed schema (producers check their output).
+#[cfg(test)]
 pub fn validate_strict(name: &str, doc: &Value) -> Vec<FieldError> {
     let v = STRICT.validator(name);
     let mut out = Vec::new();

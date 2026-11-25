@@ -13,6 +13,7 @@ mod jobs;
 mod migrations;
 mod model;
 mod problem;
+mod safeurl;
 mod schemas;
 mod secure;
 mod settings;

@@ -158,7 +158,7 @@ impl App {
     }
 
     pub async fn settings(&self) -> Result<Settings> {
-        self.db.read(|c| Settings::load(c)).await
+        self.db.read(Settings::load).await
     }
 
     pub async fn setup_done(&self) -> bool {

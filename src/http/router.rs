@@ -105,7 +105,8 @@ async fn method_not_allowed() -> Problem {
 
 pub fn router(app: App) -> Router {
     let ni = || any(protocol::not_implemented);
-    let r = Router::new()
+
+    Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(healthz))
         .route(
@@ -286,6 +287,16 @@ pub fn router(app: App) -> Router {
             post(admin::ingest_token_rotate),
         )
         .route("/admin/api/stats", get(admin::stats))
+        .route("/admin/api/me", axum::routing::patch(admin::me_patch))
+        .route("/admin/api/portal/viewer", get(admin::portal_viewer))
+        .route(
+            "/admin/api/import-sources",
+            get(admin::empty_list).post(admin::import_source_create),
+        )
+        .route(
+            "/admin/api/webhooks",
+            get(admin::empty_list).post(admin::brand_webhook_create),
+        )
         .route("/obx/{*rest}", any(api_fallback))
         .route("/admin/api/{*rest}", any(api_fallback))
         .fallback(ui::serve)
@@ -294,6 +305,5 @@ pub fn router(app: App) -> Router {
             crate::app::MAX_IMPORT_BYTES as usize,
         ))
         .layer(middleware::from_fn_with_state(app.clone(), headers_mw))
-        .with_state(app);
-    r
+        .with_state(app)
 }

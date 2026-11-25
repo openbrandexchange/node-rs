@@ -49,3 +49,15 @@ members = [".", "crates/obx-format"]
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Image decoding and resizing are slow without optimisation; dependencies are
+# built optimised in debug builds too (tests and the conformance run).
+[profile.dev.package."*"]
+opt-level = 2
+
+[lints.clippy]
+# Problem (RFC 9457 document) is the error type of every handler; boxing it
+# everywhere buys nothing.
+result_large_err = "allow"
+collapsible_if = "allow"
+too_many_arguments = "allow"

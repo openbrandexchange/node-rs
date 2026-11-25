@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use base64::Engine;
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // mail and job retention settings are read by roadmap features
 pub struct Config {
     pub public_url: String,
     pub port: u16,

@@ -79,6 +79,7 @@ impl Store {
         }
     }
 
+    #[allow(dead_code)] // range reads straight from the store (roadmap: large originals)
     pub async fn get_range(&self, key: &str, range: std::ops::Range<u64>) -> Result<Bytes, String> {
         self.inner
             .get_range(&self.path(key), range)

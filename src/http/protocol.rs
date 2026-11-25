@@ -37,6 +37,7 @@ struct Claims {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ApiClient {
     pub id: String,
     pub client_id: String,

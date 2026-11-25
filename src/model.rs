@@ -174,6 +174,7 @@ macro_rules! measurements {
             pub fn empty(&self) -> bool {
                 $(self.$f.is_none() &&)* self.strap_length_cm.is_none() && self.ext.is_empty()
             }
+            #[allow(dead_code)]
             pub fn numbers(&self) -> Vec<(&'static str, Option<f64>)> {
                 vec![$((stringify!($f), self.$f)),*]
             }

@@ -93,6 +93,7 @@ impl Db {
         })
     }
 
+    #[allow(dead_code)]
     pub fn path(&self) -> &Path {
         &self.inner.path
     }

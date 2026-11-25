@@ -802,10 +802,9 @@ impl<'a> Writer<'a> {
             let mut st = self
                 .tx
                 .prepare("SELECT code FROM product_qualifiers WHERE product_id = ?")?;
-            let r = st
-                .query_map([product_id], |r| r.get(0))?
-                .collect::<rusqlite::Result<_>>()?;
-            r
+
+            st.query_map([product_id], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?
         };
         for c in have.difference(&want) {
             self.tx.execute(
@@ -1415,9 +1414,9 @@ impl<'a> Writer<'a> {
             }
         }
         let etag = etag_for(&status, &p.data);
-        let cascade;
+
         let mut r;
-        match existing.clone() {
+        let cascade = match existing.clone() {
             None => {
                 r = Row {
                     kind: kind_static(kind),
@@ -1435,7 +1434,7 @@ impl<'a> Writer<'a> {
                 };
                 self.insert_row(&r, &p).map_err(gtin_unique)?;
                 res.result = "created".into();
-                cascade = true;
+                true
             }
             Some(e) => {
                 r = e.clone();
@@ -1455,9 +1454,9 @@ impl<'a> Writer<'a> {
                 }
                 self.update_row(&r, &p).map_err(gtin_unique)?;
                 res.result = "updated".into();
-                cascade = status_changed || parent_changed;
+                status_changed || parent_changed
             }
-        }
+        };
         self.after_write(&mut r, cascade, existing.as_ref())?;
         res.id = Some(r.id.clone());
         res.visibility = Some(visibility_of(self.tx, &r));

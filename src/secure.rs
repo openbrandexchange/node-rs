@@ -200,6 +200,7 @@ impl Keys {
 }
 
 /// `v1=<hex>` signature of a webhook delivery (protocol.md §9).
+#[allow(dead_code)] // webhooks are on the roadmap; the signature is tested
 pub fn webhook_signature(secret: &str, timestamp: &str, body: &[u8]) -> String {
     let mut m = <HmacSha256 as Mac>::new_from_slice(secret.as_bytes()).expect("hmac key");
     m.update(timestamp.as_bytes());

@@ -58,6 +58,24 @@ jobs:
           name: conformance-report
           path: conformance-report.json
 
+  node-go-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Build node-rs
+        run: cargo build --locked
+      - name: Build node-go (main)
+        run: |
+          git clone --depth 1 https://github.com/openbrandexchange/node-go /tmp/node-go
+          (cd /tmp/node-go && go build -o /tmp/node-go-bin .)
+      - name: node-rs runs on a node-go data folder
+        run: python3 -I scripts/test-node-go-data.py /tmp/node-go-bin target/debug/node-rs
+
   docker:
     runs-on: ubuntu-latest
     steps:
