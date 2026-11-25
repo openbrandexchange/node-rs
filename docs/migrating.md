@@ -14,7 +14,23 @@ node-rs uses node-go's database schema, data folder and `OBX_*` settings, so it 
 
 What carries over: catalog, images, retailers, users and passwords, sessions, API keys and upload keys (secrets stay valid), access requests and the change history (retailers' `/changes` cursors keep working). The first write to each object after the move stores it in node-rs's own JSON layout; that write produces one ordinary upsert in the change feed even when the content did not change.
 
-Not yet carried over: node-go on **PostgreSQL** (node-rs is SQLite-only for now; stay on node-go until PostgreSQL lands, see [ROADMAP.md](../ROADMAP.md)), Litestream replication (use [backup.md](backup.md) instead), and node-go's built-in HTTPS (`OBX_TLS=auto`; use Caddy). Features still on the roadmap (exports, webhooks, scheduled imports, statistics) keep their stored data and work again when they land.
+Not carried over: Litestream replication (use [backup.md](backup.md) instead), and node-go's built-in HTTPS (`OBX_TLS=auto`; use Caddy). Features still on the roadmap (exports, webhooks, statistics) keep their stored data and work again when they land.
+
+### node-go on PostgreSQL
+
+node-rs keeps its data in SQLite only (with offsite backups, [backup.md](backup.md)). A node-go on PostgreSQL is copied once with `node-rs import-postgres`; PostgreSQL is only read.
+
+1. Back up the PostgreSQL database (`pg_dump`) and stop node-go: the copy refuses a database that changes while it runs.
+2. With node-go's environment (`OBX_DATA_DIR`, `OBX_SECRET_KEY` or the `secret.key` in the data folder, `OBX_BLOB_URL`) and its `OBX_DATABASE_URL`:
+
+   ```sh
+   node-rs import-postgres --from "$OBX_DATABASE_URL"
+   ```
+
+   This writes `$OBX_DATA_DIR/obx.db` (or `--to PATH`) and refuses when that file exists. The schema is built at node-go's version, every table is copied with its sequences (so `/changes` cursors continue), the remaining migrations run, and the row counts and foreign keys are checked; a failed copy leaves nothing behind. TLS to PostgreSQL uses the system's certificates (`sslmode=require` or `verify-full`; `sslmode=disable` for a local socket or private network).
+3. Remove `OBX_DATABASE_URL` from the environment, keep everything else, and start node-rs. Images stay where they are: the same `OBX_BLOB_URL`, or the `blobs` folder of the same data folder.
+
+CI runs this path on every change: node-go on PostgreSQL imports the fixtures, `node-rs import-postgres` copies it, and node-rs must accept node-go's API keys, tokens, cursors and passwords and serve the same products (`scripts/test-node-go-data.py` with a PostgreSQL URL).
 
 ## From node-php or node-ts
 

@@ -155,7 +155,7 @@ impl Config {
             .unwrap_or_else(|| format!("sqlite:{}", data_dir.join("obx.db").display()));
         if !database_url.starts_with("sqlite:") {
             p.push(format!(
-                "OBX_DATABASE_URL: only sqlite:/path/obx.db is supported by this release (PostgreSQL is on the roadmap), got {}",
+                "OBX_DATABASE_URL: node-rs uses SQLite only (sqlite:/path/obx.db); copy a node-go PostgreSQL database once with `node-rs import-postgres` (docs/migrating.md), got {}",
                 redact(&database_url)
             ));
         }

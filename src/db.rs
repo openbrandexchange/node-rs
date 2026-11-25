@@ -46,7 +46,7 @@ struct Inner {
     readers: Mutex<Vec<Connection>>,
 }
 
-fn open_conn(path: &Path) -> rusqlite::Result<Connection> {
+pub fn open_conn(path: &Path) -> rusqlite::Result<Connection> {
     let c = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -156,6 +156,15 @@ impl Db {
 }
 
 fn migrate(c: &mut Connection) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    migrate_to(c, MIGRATIONS.len())
+}
+
+/// Applies the migrations up to version `upto` (the PostgreSQL copy
+/// builds the schema at the source's version, copies, then migrates on).
+pub fn migrate_to(
+    c: &mut Connection,
+    upto: usize,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     c.execute_batch("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")?;
     let current: usize = c.query_row(
         "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
@@ -171,7 +180,7 @@ fn migrate(c: &mut Connection) -> std::result::Result<(), Box<dyn std::error::Er
             .to_string(),
         )));
     }
-    for (i, ddl) in MIGRATIONS.iter().enumerate().skip(current) {
+    for (i, ddl) in MIGRATIONS.iter().enumerate().take(upto).skip(current) {
         let ddl = ddl.replace("{{SERIAL}}", "INTEGER PRIMARY KEY AUTOINCREMENT");
         let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute_batch(&ddl)

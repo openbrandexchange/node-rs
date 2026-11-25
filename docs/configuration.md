@@ -8,7 +8,7 @@ Environment variables, checked at start (`node-rs check-config` checks without s
 | `PORT` | `8080` | Port to listen on. |
 | `OBX_BIND` | `0.0.0.0` | Address to listen on; the systemd unit uses `127.0.0.1` behind Caddy. |
 | `OBX_DATA_DIR` | `./data` | Database, secret key and (by default) images. |
-| `OBX_DATABASE_URL` | `sqlite:$OBX_DATA_DIR/obx.db` | SQLite only in this release. |
+| `OBX_DATABASE_URL` | `sqlite:$OBX_DATA_DIR/obx.db` | SQLite only. A node-go PostgreSQL database is copied once with `node-rs import-postgres` ([migrating.md](migrating.md)). |
 | `OBX_BLOB_URL` | `file://$OBX_DATA_DIR/blobs` | `file:///path`, `s3://bucket/prefix?region=…&endpoint=…&path_style=true`, `r2://bucket/prefix?endpoint=…`. |
 | `OBX_S3_ACCESS_KEY_ID`, `OBX_S3_SECRET_ACCESS_KEY` | the `AWS_*` variables | Keys for an S3-compatible store. |
 | `OBX_SECRET_KEY` | generated once into `$OBX_DATA_DIR/secret.key` | At least 32 characters. Signs links, encrypts stored secrets. Never change it after data exists. |

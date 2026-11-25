@@ -21,6 +21,7 @@ mod metrics;
 mod migrations;
 mod model;
 mod ops;
+mod pgcopy;
 mod problem;
 mod safeurl;
 mod schemas;
@@ -71,6 +72,16 @@ enum Cmd {
         /// Replace an existing database.
         #[arg(long)]
         force: bool,
+    },
+    /// Copy a node-go PostgreSQL database into a new SQLite database in
+    /// OBX_DATA_DIR, once (docs/migrating.md). Stop node-go first.
+    ImportPostgres {
+        /// postgres://user:password@host/db (default: OBX_DATABASE_URL).
+        #[arg(long)]
+        from: Option<String>,
+        /// The new SQLite database (default: $OBX_DATA_DIR/obx.db).
+        #[arg(long)]
+        to: Option<PathBuf>,
     },
     /// Import the canonical CSV format into this node's database.
     Import {
@@ -384,6 +395,45 @@ async fn main() -> ExitCode {
             match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await {
                 Ok(_) => ExitCode::SUCCESS,
                 Err(_) => ExitCode::FAILURE,
+            }
+        }
+        Cmd::ImportPostgres { from, to } => {
+            init_logs(None);
+            let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+            let Some(from) = from.or_else(|| {
+                env("OBX_DATABASE_URL")
+                    .or_else(|| env("DATABASE_URL"))
+                    .filter(|u| u.starts_with("postgres://") || u.starts_with("postgresql://"))
+            }) else {
+                eprintln!(
+                    "node-rs import-postgres: give --from postgres://... (or OBX_DATABASE_URL)"
+                );
+                return ExitCode::FAILURE;
+            };
+            let to = to.unwrap_or_else(|| {
+                PathBuf::from(env("OBX_DATA_DIR").unwrap_or_else(|| "./data".into())).join("obx.db")
+            });
+            match pgcopy::import_postgres(&from, &to).await {
+                Ok(r) => {
+                    let rows: u64 = r.tables.values().sum();
+                    println!(
+                        "Copied {rows} rows in {} tables (node-go schema version {}) to {}.",
+                        r.tables.len(),
+                        r.version,
+                        to.display()
+                    );
+                    for (t, n) in &r.tables {
+                        println!("  {t}: {n}");
+                    }
+                    println!(
+                        "Next: unset OBX_DATABASE_URL, keep OBX_DATA_DIR, OBX_BLOB_URL and the secret key, then run: node-rs serve"
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("node-rs import-postgres: {e}");
+                    ExitCode::FAILURE
+                }
             }
         }
         Cmd::Backup { to } => {
