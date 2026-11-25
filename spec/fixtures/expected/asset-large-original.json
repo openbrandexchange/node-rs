@@ -1,0 +1,84 @@
+{
+  "id": "{{id}}",
+  "external_id": "MN-1002_OLV_1",
+  "product_id": "{{id}}",
+  "brand_id": "{{id}}",
+  "media_type": "image",
+  "color_code": "OLV",
+  "variant_ids": null,
+  "role": "packshot",
+  "view": "front",
+  "position": 1,
+  "filename": "MN-1002_OLV_1_front.png",
+  "alt_text": null,
+  "content_type": "image/png",
+  "width": 2400,
+  "height": 3000,
+  "bytes": 35152,
+  "sha256": "130b2f2dc9e1a7ff6ccc474dd57ad039fa9fa9a926f4a0daf9427a1fe6a6c617",
+  "rights": {
+    "license": "retailer-use",
+    "license_text": null,
+    "channels": [
+      "webshop",
+      "marketplace",
+      "social"
+    ],
+    "territories": null,
+    "embargo_until": null,
+    "expires_at": null,
+    "credit": null,
+    "model_release": null
+  },
+  "provenance": {
+    "ai_generated": false,
+    "ai_edited": false,
+    "source": "photo",
+    "c2pa": "none",
+    "c2pa_manifest_url": null,
+    "generator": null
+  },
+  "renditions": {
+    "original": {
+      "name": "original",
+      "url": "{{url}}",
+      "url_expires_at": "{{datetime|null}}",
+      "content_type": "image/png",
+      "width": 2400,
+      "height": 3000,
+      "bytes": 35152,
+      "sha256": "130b2f2dc9e1a7ff6ccc474dd57ad039fa9fa9a926f4a0daf9427a1fe6a6c617"
+    },
+    "web": {
+      "name": "web",
+      "url": "{{url}}",
+      "url_expires_at": "{{datetime|null}}",
+      "content_type": "image/jpeg",
+      "width": 1600,
+      "height": 2000,
+      "bytes": "{{int}}",
+      "sha256": "{{sha256}}"
+    },
+    "square": {
+      "name": "square",
+      "url": "{{url}}",
+      "url_expires_at": "{{datetime|null}}",
+      "content_type": "image/jpeg",
+      "width": 2000,
+      "height": 2000,
+      "bytes": "{{int}}",
+      "sha256": "{{sha256}}"
+    },
+    "thumb": {
+      "name": "thumb",
+      "url": "{{url}}",
+      "url_expires_at": "{{datetime|null}}",
+      "content_type": "image/jpeg",
+      "width": 480,
+      "height": 600,
+      "bytes": "{{int}}",
+      "sha256": "{{sha256}}"
+    }
+  },
+  "updated_at": "{{datetime}}"
+}

@@ -1,0 +1,72 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --all --locked
+
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Build node-rs
+        run: cargo build --locked
+      - name: Install obx-conformance (obx-go main)
+        run: go install github.com/openbrandexchange/obx-go/cmd/obx-conformance@main
+      - name: Conformance (all profiles)
+        run: scripts/conformance.sh all
+      - name: Report in the job summary
+        if: always()
+        run: |
+          if [ -f conformance-report.json ]; then
+            "$(go env GOPATH)/bin/obx-conformance" report --format markdown conformance-report.json >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: conformance-report
+          path: conformance-report.json
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t node-rs:ci .
+      - name: Smoke test
+        run: |
+          docker run -d --name n -p 8080:8080 -e OBX_PUBLIC_URL=http://localhost:8080 node-rs:ci
+          for i in $(seq 1 50); do curl -fsS http://localhost:8080/healthz && break; sleep 0.2; done
+          curl -fsS http://localhost:8080/admin/api/setup | grep -q '"required":true'
+          docker logs n 2>&1 | grep -q 'setup code'

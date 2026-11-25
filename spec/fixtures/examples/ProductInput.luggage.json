@@ -1,0 +1,58 @@
+{
+  "brand_external_id": "maison-noor",
+  "style_number": "MN-1008",
+  "name": {
+    "en": "Voyage Hardshell Cabin Case",
+    "nl": "Harde handbagagekoffer Voyage"
+  },
+  "item_type": "luggage",
+  "item_subtype": "cabin",
+  "target_group": "unisex",
+  "materials": [
+    {
+      "part": {
+        "code": "shell"
+      },
+      "fibers": [
+        {
+          "material": {
+            "code": "polypropylene"
+          },
+          "percentage": 100
+        }
+      ]
+    },
+    {
+      "part": {
+        "code": "lining"
+      },
+      "fibers": [
+        {
+          "material": {
+            "code": "polyester"
+          },
+          "percentage": 100,
+          "qualifiers": [
+            {
+              "code": "recycled"
+            },
+            {
+              "code": "post_consumer"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "contains_animal_origin": null,
+  "footwear_materials": null,
+  "country_of_origin": "CN",
+  "certifications": null,
+  "features": {
+    "shell": "hard",
+    "wheels": 4,
+    "lock": "tsa_combination",
+    "expandable": true,
+    "closure": "zip"
+  }
+}

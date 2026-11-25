@@ -1,0 +1,41 @@
+# node-rs with Caddy for HTTPS (docs/hosting.md).
+#
+#   DOMAIN=portal.yourbrand.com docker compose up -d
+#   docker compose logs node-rs      # the one-time setup code
+#
+# Data lives in the node-rs-data volume (SQLite database, secret key and
+# images); back it up offsite (docs/backup.md).
+name: node-rs
+services:
+  node-rs:
+    image: ghcr.io/openbrandexchange/node-rs:${NODE_RS_VERSION:-0.1}
+    restart: unless-stopped
+    environment:
+      OBX_PUBLIC_URL: https://${DOMAIN:?set DOMAIN to your portal's domain}
+      OBX_DATA_DIR: /data
+      OBX_TRUST_PROXY: "true"
+      OBX_LOG_FORMAT: json
+    env_file:
+      - path: ./node-rs.env
+        required: false
+    volumes:
+      - node-rs-data:/data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/node-rs", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    command: caddy reverse-proxy --from ${DOMAIN} --to node-rs:8080
+    volumes:
+      - caddy-data:/data
+    depends_on:
+      - node-rs
+volumes:
+  node-rs-data:
+  caddy-data:

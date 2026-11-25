@@ -1,0 +1,7 @@
+{
+  "brands": 2,
+  "products": 11,
+  "variants": 46,
+  "assets": 35,
+  "note": "Visible objects after importing fixtures/maison-noor into a fresh node whose first brand is external_id 'maison-noor' (see fixtures/README.md)."
+}

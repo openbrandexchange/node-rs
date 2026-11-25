@@ -1,0 +1,74 @@
+{
+  "id": "{{id}}",
+  "external_id": "MN-1001_NVY_1",
+  "product_id": "{{id}}",
+  "brand_id": "{{id}}",
+  "media_type": "image",
+  "color_code": "NVY",
+  "variant_ids": null,
+  "role": "packshot",
+  "view": "front",
+  "position": 1,
+  "filename": "MN-1001_NVY_1_front.png",
+  "alt_text": null,
+  "content_type": "image/png",
+  "width": 1200,
+  "height": 1500,
+  "bytes": 11002,
+  "sha256": "330d6c1143d8bd56a440866c18f02493f00e0e73cc74917e373665f70b0a132d",
+  "rights": {
+    "license": "retailer-use",
+    "license_text": null,
+    "channels": [
+      "webshop",
+      "marketplace",
+      "social"
+    ],
+    "territories": null,
+    "embargo_until": null,
+    "expires_at": null,
+    "credit": null,
+    "model_release": null
+  },
+  "provenance": {
+    "ai_generated": false,
+    "ai_edited": false,
+    "source": "photo",
+    "c2pa": "none",
+    "c2pa_manifest_url": null,
+    "generator": null
+  },
+  "renditions": {
+    "web": {
+      "name": "web",
+      "url": "{{url}}",
+      "url_expires_at": "{{datetime|null}}",
+      "content_type": "image/jpeg",
+      "width": 1200,
+      "height": 1500,
+      "bytes": "{{int}}",
+      "sha256": "{{sha256}}"
+    },
+    "square": {
+      "name": "square",
+      "url": "{{url}}",
+      "url_expires_at": "{{datetime|null}}",
+      "content_type": "image/jpeg",
+      "width": 1500,
+      "height": 1500,
+      "bytes": "{{int}}",
+      "sha256": "{{sha256}}"
+    },
+    "thumb": {
+      "name": "thumb",
+      "url": "{{url}}",
+      "url_expires_at": "{{datetime|null}}",
+      "content_type": "image/jpeg",
+      "width": 480,
+      "height": 600,
+      "bytes": "{{int}}",
+      "sha256": "{{sha256}}"
+    }
+  },
+  "updated_at": "{{datetime}}"
+}

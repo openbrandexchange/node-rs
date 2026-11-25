@@ -1,0 +1,14 @@
+{
+  "filter": {
+    "brand_ids": [
+      "brd_maison_noor"
+    ],
+    "product_ids": null,
+    "gtins": null,
+    "updated_since": null
+  },
+  "renditions": [
+    "web"
+  ],
+  "include_data": true
+}
