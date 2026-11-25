@@ -10,10 +10,16 @@ all-features = false
 version = 2
 yanked = "deny"
 ignore = [
-    # rsa: Marvin attack (timing side channel on RSA decryption,
-    # RUSTSEC-2023-0071); no fixed version exists. node-rs only signs with
-    # an RSA key (SFTP login with a brand's own RSA key) and never decrypts.
-    { id = "RUSTSEC-2023-0071", reason = "no fix released; node-rs never decrypts with RSA (SFTP client signatures only)" },
+    # quick-xml 0.38 inside object_store 0.12 (S3 list responses). Our own
+    # XML (Excel workbooks) uses quick-xml 0.42, which is fixed. Moving to
+    # object_store 0.14 also needs reqwest 0.13 across the node; until
+    # then the only XML it parses comes from the blob store or the S3
+    # import source the brand configured itself.
+    { id = "RUSTSEC-2026-0194", reason = "object_store 0.12 only; XML from the operator's own S3 endpoint" },
+    { id = "RUSTSEC-2026-0195", reason = "object_store 0.12 only; XML from the operator's own S3 endpoint" },
+    # chrono is used by every crate and by object_store; no maintained
+    # drop-in exists yet (time zones already moved to jiff).
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained, no known vulnerability; used throughout and by object_store" },
 ]
 
 [licenses]
@@ -28,13 +34,8 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Zlib",
-    "CC0-1.0",
     "Unicode-3.0",
-    "MPL-2.0",
-    "CDLA-Permissive-2.0",
-    "OpenSSL",
-    "BSL-1.0",
-    "0BSD",
+    "MIT-0",
 ]
 
 [bans]

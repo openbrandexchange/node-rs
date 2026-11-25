@@ -502,7 +502,11 @@ fn walk_xml(data: &[u8], part: &str, mut f: impl FnMut(Tok) -> WbResult<Flow>) -
         c.expand_empty_elements = true;
     }
     let mut depth: usize = 0;
-    let local_str = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    let space_of = |ns: ResolveResult<'_>| match ns {
+        ResolveResult::Bound(n) => n.as_ref().to_string(),
+        ResolveResult::Unknown(p) => p,
+        ResolveResult::Unbound => String::new(),
+    };
     loop {
         let ev = r.read_event().map_err(|e| bad(e.to_string()))?;
         let tok = match ev {
@@ -520,7 +524,7 @@ fn walk_xml(data: &[u8], part: &str, mut f: impl FnMut(Tok) -> WbResult<Flow>) -
             }
             Event::Decl(d) => {
                 if let Some(Ok(enc)) = d.encoding() {
-                    let enc = String::from_utf8_lossy(&enc).to_string();
+                    let enc = enc.to_string();
                     if !enc.eq_ignore_ascii_case("utf-8") {
                         return Err(bad(format!("encoding {enc:?} declared")));
                     }
@@ -530,28 +534,18 @@ fn walk_xml(data: &[u8], part: &str, mut f: impl FnMut(Tok) -> WbResult<Flow>) -
             Event::PI(_) | Event::Comment(_) => continue,
             Event::Start(e) => {
                 depth += 1;
-                let (ns, local) = r.resolve_element(e.name());
-                let space = match ns {
-                    ResolveResult::Bound(n) => local_str(n.as_ref()),
-                    ResolveResult::Unknown(p) => local_str(&p),
-                    ResolveResult::Unbound => String::new(),
-                };
-                let local = local_str(local.as_ref());
+                let (ns, local) = r.resolver().resolve_element(e.name());
+                let space = space_of(ns);
+                let local = local.as_ref().to_string();
                 let mut attrs = Vec::new();
                 for a in e.attributes().with_checks(true) {
                     let a = a.map_err(|e| bad(e.to_string()))?;
-                    let (ans, al) = r.resolve_attribute(a.key);
-                    let aspace = match ans {
-                        ResolveResult::Bound(n) => local_str(n.as_ref()),
-                        ResolveResult::Unknown(p) => local_str(&p),
-                        ResolveResult::Unbound => String::new(),
-                    };
-                    let raw =
-                        std::str::from_utf8(&a.value).map_err(|_| bad("invalid UTF-8".into()))?;
-                    let v = quick_xml::escape::unescape(&norm_newlines(raw))
+                    let (ans, al) = r.resolver().resolve_attribute(a.key);
+                    let aspace = space_of(ans);
+                    let v = quick_xml::escape::unescape(&norm_newlines(&a.value))
                         .map_err(|e| bad(e.to_string()))?
                         .into_owned();
-                    attrs.push((aspace, local_str(al.as_ref()), v));
+                    attrs.push((aspace, al.as_ref().to_string(), v));
                 }
                 Tok::Start {
                     space,
@@ -561,25 +555,19 @@ fn walk_xml(data: &[u8], part: &str, mut f: impl FnMut(Tok) -> WbResult<Flow>) -
             }
             Event::End(e) => {
                 depth = depth.saturating_sub(1);
-                let (_, local) = r.resolve_element(e.name());
+                let (_, local) = r.resolver().resolve_element(e.name());
                 Tok::End {
-                    local: local_str(local.as_ref()),
+                    local: local.as_ref().to_string(),
                 }
             }
             Event::Empty(_) => unreachable!("expand_empty_elements"),
-            Event::Text(t) => {
-                let raw = std::str::from_utf8(&t).map_err(|_| bad("invalid UTF-8".into()))?;
-                Tok::Text(norm_newlines(raw))
-            }
-            Event::CData(t) => {
-                let raw = std::str::from_utf8(&t).map_err(|_| bad("invalid UTF-8".into()))?;
-                Tok::Text(norm_newlines(raw))
-            }
+            Event::Text(t) => Tok::Text(norm_newlines(&t)),
+            Event::CData(t) => Tok::Text(norm_newlines(&t)),
             Event::GeneralRef(g) => {
                 if let Some(c) = g.resolve_char_ref().map_err(|e| bad(e.to_string()))? {
                     Tok::Text(c.to_string())
                 } else {
-                    let name = String::from_utf8_lossy(&g).to_string();
+                    let name = g.to_string();
                     let s = match name.as_str() {
                         "amp" => "&",
                         "lt" => "<",
@@ -639,7 +627,15 @@ impl Package {
                     format!("the zip cannot be read ({e})"),
                 )
             })?;
-            let name = f.name().to_string();
+            let name = f
+                .name()
+                .map_err(|e| {
+                    wb_err(
+                        ERR_WORKBOOK_INVALID,
+                        format!("the zip cannot be read ({e})"),
+                    )
+                })?
+                .to_string();
             if name.ends_with('/') {
                 continue;
             }
@@ -710,7 +706,10 @@ impl Package {
         let limit = declared.min(room) + 1;
         let mut data = Vec::new();
         let res = (&mut f).take(limit).read_to_end(&mut data);
-        let real_name = f.name().to_string();
+        let real_name = f
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| name.to_string());
         drop(f);
         let n = data.len() as u64;
         self.inflated += n;
@@ -718,7 +717,9 @@ impl Package {
         // for an entry that inflates beyond it.
         if n > declared
             || self.inflated > WORKBOOK_MAX_TOTAL_BYTES
-            || (res.is_err() && n >= declared && declared > 0)
+            || res
+                .as_ref()
+                .is_err_and(|e| super::package::beyond_declared(e, n, declared))
         {
             return Err(wb_err(
                 ERR_WORKBOOK_TOO_LARGE,

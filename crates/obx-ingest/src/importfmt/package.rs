@@ -104,7 +104,10 @@ impl<R: Read + Seek> ZipPackage<R> {
             let e = archive
                 .by_index_raw(i)
                 .map_err(|e| ZipError::Unreadable(e.to_string()))?;
-            let name = e.name().to_string();
+            let name = e
+                .name()
+                .map_err(|e| ZipError::Unreadable(e.to_string()))?
+                .to_string();
             safe_entry(&name, e.is_symlink()).map_err(|err| ZipError::Unsafe(err.to_string()))?;
             if e.encrypted() {
                 return Err(ZipError::Unreadable(format!(
@@ -172,7 +175,9 @@ impl<R: Read + Seek> ZipPackage<R> {
         self.inflated = self.inflated.saturating_add(n);
         if n > entry.size
             || self.inflated > self.limits.max_total_bytes
-            || (res.is_err() && n >= entry.size && entry.size > 0)
+            || res
+                .as_ref()
+                .is_err_and(|e| beyond_declared(e, n, entry.size))
         {
             return Err(ZipError::TooLarge(format!(
                 "{} expands beyond its declared size",
@@ -182,6 +187,13 @@ impl<R: Read + Seek> ZipPackage<R> {
         res.map_err(|e| ZipError::Unreadable(format!("{}: {e}", entry.name)))?;
         Ok(data)
     }
+}
+
+/// Whether a read error means the entry inflates beyond its declared size:
+/// the zip reader says so, or it stopped at the declared size with a bad
+/// checksum.
+pub(crate) fn beyond_declared(e: &std::io::Error, n: u64, declared: u64) -> bool {
+    e.to_string().contains("larger than its declared") || (n >= declared && declared > 0)
 }
 
 #[cfg(test)]
@@ -321,7 +333,12 @@ mod tests {
         }
         let mut p = open(d).unwrap();
         assert_eq!(p.entries()[0].size, 1000);
-        assert!(matches!(p.read(0, 1 << 20), Err(ZipError::TooLarge(_))));
+        let r = p.read(0, 1 << 20);
+        assert!(
+            matches!(r, Err(ZipError::TooLarge(_))),
+            "{:?}",
+            r.map(|d| d.len())
+        );
     }
 
     #[test]

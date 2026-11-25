@@ -442,7 +442,7 @@ const JSON_COLS: [&str; 8] = [
 
 fn query_maps(c: &Connection, q: &str, args: &[&str]) -> Result<Vec<Value>> {
     let mut st = c.prepare(q)?;
-    let cols: Vec<String> = st.column_names().iter().map(|s| s.to_string()).collect();
+    let cols: Vec<String> = st.column_names().map(|s| s.to_string()).collect();
     let rows = st
         .query_map(rusqlite::params_from_iter(args.iter()), |r| {
             let mut m = Map::new();

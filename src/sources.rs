@@ -213,7 +213,7 @@ async fn validate_source(app: &App, doc: &mut Map<String, Value>) -> Result<()> 
     }
     if let Some(Value::Object(sched)) = doc.get_mut("schedule") {
         if let Some(tz) = sched.get("timezone").and_then(|v| v.as_str()) {
-            if !tz.is_empty() && tz.parse::<chrono_tz::Tz>().is_err() {
+            if !tz.is_empty() && jiff::tz::TimeZone::get(tz).is_err() {
                 return Err(
                     Problem::new("validation_failed", format!("Unknown timezone {tz:?}.")).field(
                         "/schedule/timezone",
@@ -590,23 +590,22 @@ pub async fn h_test(
 
 // ---- schedule -------------------------------------------------------------------------
 
+/// A wall-clock time in a zone; a time in a DST gap moves forward, an
+/// ambiguous one takes the earlier instant (jiff's "compatible" rule).
 fn local_at(
-    tz: chrono_tz::Tz,
-    d: chrono::NaiveDate,
-    hh: u32,
-    mm: u32,
-) -> chrono::DateTime<chrono_tz::Tz> {
-    use chrono::TimeZone;
-    let naive = d.and_hms_opt(hh.min(23), mm.min(59), 0).unwrap_or_default();
-    match tz.from_local_datetime(&naive) {
-        chrono::LocalResult::Single(t) => t,
-        chrono::LocalResult::Ambiguous(a, _) => a,
-        // A time in a DST gap: the same wall time an hour later.
-        chrono::LocalResult::None => tz
-            .from_local_datetime(&(naive + chrono::Duration::hours(1)))
-            .earliest()
-            .unwrap_or_else(|| tz.from_utc_datetime(&naive)),
-    }
+    tz: &jiff::tz::TimeZone,
+    d: jiff::civil::Date,
+    hh: i8,
+    mm: i8,
+) -> Option<jiff::ZonedDateTime> {
+    d.at(hh.clamp(0, 23), mm.clamp(0, 59), 0, 0)
+        .to_zoned_datetime(tz.clone())
+        .ok()
+}
+
+fn to_chrono(z: &jiff::ZonedDateTime) -> Option<chrono::DateTime<chrono::Utc>> {
+    let t = z.timestamp();
+    chrono::DateTime::from_timestamp(t.as_second(), t.subsec_nanosecond().max(0) as u32)
 }
 
 /// The next scheduled time (None for manual or disabled).
@@ -615,7 +614,7 @@ pub fn next_run(
     now: chrono::DateTime<chrono::Utc>,
     enabled: bool,
 ) -> Option<String> {
-    use chrono::{Datelike, Timelike};
+    use chrono::Timelike;
     if !enabled {
         return None;
     }
@@ -623,48 +622,54 @@ pub fn next_run(
         .get("frequency")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let tz: chrono_tz::Tz = sched
+    let tz = sched
         .get("timezone")
         .and_then(|v| v.as_str())
-        .and_then(|t| t.parse().ok())
-        .unwrap_or(chrono_tz::UTC);
-    let local = now.with_timezone(&tz);
-    let (mut hh, mut mm) = (3u32, 0u32);
+        .filter(|t| !t.is_empty())
+        .and_then(|t| jiff::tz::TimeZone::get(t).ok())
+        .unwrap_or(jiff::tz::TimeZone::UTC);
+    let (mut hh, mut mm) = (3i8, 0i8);
     if let Some(t) = sched.get("time").and_then(|v| v.as_str()) {
         if t.len() == 5 {
             hh = t[..2].parse().unwrap_or(3);
             mm = t[3..].parse().unwrap_or(0);
         }
     }
-    let utc = |t: chrono::DateTime<chrono_tz::Tz>| db::fmt_time(t.with_timezone(&chrono::Utc));
-    match freq {
-        "hourly" => {
-            let t = now.with_minute(0)?.with_second(0)?.with_nanosecond(0)?
-                + chrono::Duration::hours(1);
-            Some(db::fmt_time(t))
-        }
+    if freq == "hourly" {
+        let t =
+            now.with_minute(0)?.with_second(0)?.with_nanosecond(0)? + chrono::Duration::hours(1);
+        return Some(db::fmt_time(t));
+    }
+    let ts = jiff::Timestamp::new(now.timestamp(), now.timestamp_subsec_nanos() as i32).ok()?;
+    let local = ts.to_zoned_datetime(tz.clone());
+    let today = local.date();
+    let next = match freq {
         "daily" => {
-            let mut n = local_at(tz, local.date_naive(), hh, mm);
-            if n <= local {
-                n = local_at(tz, local.date_naive() + chrono::Days::new(1), hh, mm);
+            let n = local_at(&tz, today, hh, mm)?;
+            if n > local {
+                n
+            } else {
+                local_at(&tz, today.tomorrow().ok()?, hh, mm)?
             }
-            Some(utc(n))
         }
         "weekly" => {
             let wd = sched.get("weekday").and_then(|v| v.as_i64()).unwrap_or(1);
-            let want = (wd.rem_euclid(7)) as u32; // 7 = Sunday = 0
-            let mut d = local.date_naive();
+            let want = wd.rem_euclid(7) as i8; // 7 = Sunday = 0
+            let mut d = today;
+            let mut found = None;
             for _ in 0..15 {
-                let n = local_at(tz, d, hh, mm);
-                if d.weekday().num_days_from_sunday() == want && n > local {
-                    return Some(utc(n));
+                let n = local_at(&tz, d, hh, mm)?;
+                if d.weekday().to_sunday_zero_offset() == want && n > local {
+                    found = Some(n);
+                    break;
                 }
-                d = d + chrono::Days::new(1);
+                d = d.tomorrow().ok()?;
             }
-            None
+            found?
         }
-        _ => None,
-    }
+        _ => return None,
+    };
+    to_chrono(&next).map(db::fmt_time)
 }
 
 /// Starts runs of sources whose next_run_at passed.

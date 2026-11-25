@@ -117,3 +117,13 @@ jobs:
         run: cargo build --locked
       - name: Scheduled imports (https, SFTP, S3)
         run: python3 -I scripts/test-sources.py target/debug/node-rs
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Licences, advisories, bans and sources (deny.toml)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --workspace
