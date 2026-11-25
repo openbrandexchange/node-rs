@@ -4,6 +4,7 @@ pub mod access;
 pub mod admin;
 pub mod feed;
 pub mod ingest;
+pub mod people;
 pub mod protocol;
 pub mod router;
 pub mod ui;

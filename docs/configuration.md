@@ -15,7 +15,20 @@ Environment variables, checked at start (`node-rs check-config` checks without s
 | `OBX_SETUP_CODE` | generated and printed in the log | One-time code for the first-run setup. |
 | `OBX_TRUST_PROXY` | `false` | Take the client address from `X-Forwarded-For` (behind Caddy or a load balancer). |
 | `OBX_WORKERS` | `2` | Background workers for imports and batches. |
-| `OBX_CHANGE_RETENTION_DAYS` | `400` (90–36500) | How long the change history is kept. |
+| `OBX_CHANGE_RETENTION_DAYS` | `400` (90–36500) | How long the change history is kept; a `/changes` cursor from before answers `410 cursor_expired`. |
+| `OBX_JOB_RETENTION_DAYS` | `30` (8–36500) | How long finished batch, export and download jobs and their results are kept. |
+| `OBX_WEBHOOK_LOG_RETENTION_DAYS` | `8` (1–365) | How long the webhook delivery log is kept. |
+| `OBX_SMTP_URL` | not set | `smtp://user:password@host:587` (STARTTLS) or `smtps://user:password@host:465`. Encode special characters in the password (`@` → `%40`). Without STARTTLS the node refuses to send credentials, except to `localhost`; `?insecure=true` allows a plain local relay. Not set: e-mails are written to the log (subject and recipient only) and invitation links are shown in the admin. Failed e-mails are retried for about a day (1, 5, 15 minutes, 1, 3, 6, 12 hours). |
+| `OBX_MAIL_FROM` | `no-reply@` + the host of `OBX_PUBLIC_URL` | Sender address: a plain address such as `portal@yourbrand.com`. |
+| `OBX_MAIL_LOG_BODIES` | `false` | Development only: log whole e-mails, one-time links included. |
+| `OBX_ACCESS_LOG` | `true` | One info line per request (method, route, path without query, status, duration, request id). Client addresses are never logged. |
+| `OBX_METRICS` | `false` (`true` when a token is set) | Prometheus metrics at `/metrics`: requests and latency per route, jobs, mail outbox, webhook queue, change feed, catalog counts. |
+| `OBX_METRICS_TOKEN` | not set | At least 16 characters; scrapers send `Authorization: Bearer <token>`. Without it `/metrics` is readable by anyone who can reach the node. |
+| `OBX_SHUTDOWN_DELAY` | `0` (0–60) | Seconds `/readyz` answers 503 after SIGTERM before the server stops accepting requests (for load balancers). Running requests always finish. |
 | `OBX_LOG_FORMAT`, `OBX_LOG_LEVEL` | `text` (`json` in Docker), `info` | Logs go to standard error. |
 | `OBX_ALLOW_PRIVATE_URLS` | `false` | Development only. |
 | `OBX_TEST_RATE_LIMIT` | not set | Conformance testing only: a lower per-minute API limit. |
+
+`/healthz` answers `ok` while the process and database work; `/readyz` answers JSON (`status`, `version`, `schema_version`, `checks`) and 503 while shutting down or when the database or file store does not answer. Every response carries an `X-Request-Id` (a sane incoming one is kept); the audit log records it.
+
+Retention of personal data is set by the brand under Settings (`retention`: download statistics 730 days, audit log 365 days, decided access requests 365 days). Names leave the download statistics after at most 400 days. Housekeeping runs every 30 seconds: e-mail retries, expired image rights, and every five minutes expired sessions, uploads, prepared downloads and exports, old jobs and the retention limits above; the change history is pruned hourly.

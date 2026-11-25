@@ -19,7 +19,7 @@ use crate::secure;
 pub const SESSION_COOKIE: &str = "obx_session";
 pub const CSRF_COOKIE: &str = "obx_csrf";
 const SESSION_TTL_DAYS: i64 = 30;
-const INVITE_TTL_DAYS: i64 = 7;
+use super::people::INVITE_TTL_DAYS;
 
 /// The 25 interface languages of admin-ui.
 pub const UI_LANGS: [&str; 25] = [
@@ -57,6 +57,7 @@ pub struct User {
     pub password_hash: Option<String>,
     pub invite_expires_at: Option<String>,
     pub last_login_at: Option<String>,
+    pub reset_expires_at: Option<String>,
 }
 
 impl User {
@@ -69,7 +70,7 @@ impl User {
 
 pub fn load_user(c: &Connection, where_: &str, arg: &str) -> Result<Option<User>> {
     Ok(c.query_row(
-        &format!("SELECT id, email, name, role, status, language, created_at, retailer_id, password_hash, invite_expires_at, last_login_at FROM users WHERE {where_}"),
+        &format!("SELECT id, email, name, role, status, language, created_at, retailer_id, password_hash, invite_expires_at, last_login_at, reset_expires_at FROM users WHERE {where_}"),
         [arg],
         |r| {
             Ok(User {
@@ -84,6 +85,7 @@ pub fn load_user(c: &Connection, where_: &str, arg: &str) -> Result<Option<User>
                 password_hash: r.get(8)?,
                 invite_expires_at: r.get(9)?,
                 last_login_at: r.get(10)?,
+                reset_expires_at: r.get(11)?,
             })
         },
     )
@@ -260,10 +262,11 @@ pub async fn admin_guard(
         }
         _ => {}
     }
+    crate::audit::guard_passed(s.as_ref().map(|s| &s.user));
     Ok(s)
 }
 
-fn session_json(
+pub fn session_json(
     c: &Connection,
     s: Option<&User>,
     csrf: &str,
@@ -281,7 +284,11 @@ fn session_json(
     Ok(out)
 }
 
-fn start_session(tx: &Connection, headers: &HeaderMap, user_id: &str) -> Result<(String, String)> {
+pub fn start_session(
+    tx: &Connection,
+    headers: &HeaderMap,
+    user_id: &str,
+) -> Result<(String, String)> {
     if let Some(old) = cookie(headers, SESSION_COOKIE) {
         tx.execute(
             "DELETE FROM sessions WHERE id_hash = ?",
@@ -303,7 +310,7 @@ fn start_session(tx: &Connection, headers: &HeaderMap, user_id: &str) -> Result<
     Ok((id, csrf))
 }
 
-fn session_response(
+pub fn session_response(
     app: &App,
     status: u16,
     body: &Value,
@@ -562,9 +569,20 @@ pub async fn login(
             "The e-mail address or password is not correct.",
         )
     };
+    let failed = |target: Option<&User>, code: &str| crate::audit::Entry {
+        action: "session.login".into(),
+        method: "POST".into(),
+        route: "/admin/api/session/login".into(),
+        target_type: "user".into(),
+        target_id: target.map(|u| u.id.clone()).unwrap_or_default(),
+        status: 401,
+        details: Some(json!({"reason": code})),
+        ..Default::default()
+    };
     let Some(u) = u.filter(|u| u.password_hash.is_some() && password.len() <= 200) else {
         let pw = password.clone();
         let _ = tokio::task::spawn_blocking(move || secure::dummy_password_check(&pw)).await;
+        crate::audit::record(&app, failed(None, "invalid_credentials")).await;
         return Err(invalid());
     };
     let (h, pw) = (u.password_hash.clone().unwrap(), password.clone());
@@ -572,9 +590,11 @@ pub async fn login(
         .await
         .unwrap_or(false);
     if !good {
+        crate::audit::record(&app, failed(Some(&u), "invalid_credentials")).await;
         return Err(invalid());
     }
     if u.status == "blocked" {
+        crate::audit::record(&app, failed(Some(&u), "account_blocked")).await;
         return Err(Problem::new("account_blocked", "This account is blocked."));
     }
     if u.role == "retailer" {
@@ -596,6 +616,19 @@ pub async fn login(
         .write(move |tx| {
             let (sid, csrf) = start_session(tx, &h2, &u.id)?;
             let out = session_json(tx, Some(&u), &csrf, false)?;
+            crate::audit::write(
+                tx,
+                &crate::audit::Entry {
+                    actor: Some(crate::audit::Actor::of(&u)),
+                    action: "session.login".into(),
+                    method: "POST".into(),
+                    route: "/admin/api/session/login".into(),
+                    target_type: "user".into(),
+                    target_id: u.id.clone(),
+                    status: 200,
+                    ..Default::default()
+                },
+            )?;
             Ok((sid, csrf, out))
         })
         .await?;
@@ -673,7 +706,7 @@ fn settings_json(app: &App, s: &Settings) -> Value {
     );
     m["branding"]["favicon_url"] = Value::Null;
     m["node"] = json!({"public_url": base, "discovery_url": format!("{base}/.well-known/obx"), "software": crate::app::SOFTWARE,
-        "version": crate::app::VERSION, "email_configured": false, "renditions_server_generated": true,
+        "version": crate::app::VERSION, "email_configured": app.mail.configured(), "renditions_server_generated": true,
         "max_upload_bytes": crate::app::MAX_UPLOAD_BYTES,
         "custom_domain_help": "Point a DNS record for your domain at this server, make sure HTTPS works for it (Caddy in front does this), and set `OBX_PUBLIC_URL` to the new address."});
     m
@@ -1938,10 +1971,6 @@ pub fn invite_user(
     )?;
     let u = load_user(c, "id = ?", &id)?.unwrap();
     let link = format!("{}/invite/{token}", app.cfg.public_url);
-    tracing::info!(user = %u.id, "invitation created; e-mail is not configured, share the link from the admin");
-    if app.cfg.mail_log_bodies {
-        tracing::info!(to = %email, link = %link, "invitation e-mail");
-    }
     Ok(json!({"user": u.json(), "invite_url": link, "expires_at": exp, "email_sent": false}))
 }
 
@@ -1954,7 +1983,7 @@ pub async fn user_invite(
     admin_guard(&app, &headers, &method, "admin").await?;
     let b = read_json_object(&headers, &body)?;
     let a = app.clone();
-    let out = app
+    let mut out = app
         .db
         .write(move |tx| {
             invite_user(
@@ -1970,6 +1999,7 @@ pub async fn user_invite(
             )
         })
         .await?;
+    super::people::send_invite_mail(&app, &mut out).await;
     Ok(json(201, &out))
 }
 
@@ -2169,7 +2199,7 @@ pub async fn access_approve(
     admin_guard(&app, &headers, &method, "admin").await?;
     let raw = optional_object(&headers, &body)?;
     let a = app.clone();
-    let out = app
+    let (mut out, mail) = app
         .db
         .write(move |tx| {
             let Some(ar) = super::access::load(tx, &id)? else { return Err(Problem::new("not_found", "Access request not found.")) };
@@ -2230,9 +2260,27 @@ pub async fn access_approve(
             out["access_request"] = super::access::load(tx, &ar.id)?.unwrap().admin_json();
             let r = load_retailer(tx, &retailer_id)?.unwrap();
             out["retailer"] = retailer_json(tx, &r)?;
-            Ok(out)
+            let mail = (!invited && !email.is_empty()).then(|| {
+                let mut vars = vec![("name", cname.clone())];
+                if ar.wants("portal") {
+                    vars.push(("url", format!("{}/login", a.cfg.public_url)));
+                }
+                if create_client {
+                    vars.push(("api", "1".to_string()));
+                }
+                (email.clone(), lang.clone(), vars)
+            });
+            Ok((out, mail))
         })
         .await?;
+    if out.get("invite").is_some() {
+        let mut inv = out["invite"].take();
+        super::people::send_invite_mail(&app, &mut inv).await;
+        out["invite"] = inv;
+    }
+    if let Some((to, lang, vars)) = mail {
+        crate::mail::send_mail(&app, &to, &lang, crate::mail::MAIL_ACCESS_APPROVED, &vars).await;
+    }
     Ok(ok(&out))
 }
 
@@ -2267,9 +2315,13 @@ pub async fn access_reject(
             if n != 1 {
                 return Err(Problem::new("conflict", format!("This request was already {}.", ar.status)));
             }
-            Ok(super::access::load(tx, &ar.id)?.unwrap().admin_json())
+            let s = |k: &str| ar.contact.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let mail = (s("email"), s("language"), vec![("name", s("name")), ("reason", reason.clone().unwrap_or_default())]);
+            Ok((super::access::load(tx, &ar.id)?.unwrap().admin_json(), mail))
         })
         .await?;
+    let (out, (to, lang, vars)) = out;
+    crate::mail::send_mail(&app, &to, &lang, crate::mail::MAIL_ACCESS_REJECTED, &vars).await;
     Ok(ok(&out))
 }
 

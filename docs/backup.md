@@ -12,11 +12,11 @@ A portal you host yourself is only as safe as your last restore. Do all four:
 | What | Where | How |
 |---|---|---|
 | The database | `$OBX_DATA_DIR/obx.db` (SQLite, WAL mode) | **`node-rs backup --to DIR`** (recommended): a consistent online copy through SQLite's backup API, safe while the node runs. Never copy `obx.db` with `cp` while it runs. Equivalent: `sqlite3 obx.db ".backup DIR/obx.db"`. |
-| The secret key | `$OBX_DATA_DIR/secret.key`, or `OBX_SECRET_KEY` | `node-rs backup` copies the file. If you set `OBX_SECRET_KEY`, keep it in your password manager: without it the restored node cannot decrypt stored credentials and every download link and access token changes. |
-| Images | `$OBX_DATA_DIR/blobs`, or your S3-compatible bucket | Content-addressed and never rewritten, so copying them after the database snapshot is consistent. On local disk: include the folder in the offsite copy. In a bucket: see below. |
+| The secret key | `$OBX_DATA_DIR/secret.key`, or `OBX_SECRET_KEY` | `node-rs backup` copies the file. If you set `OBX_SECRET_KEY`, keep it in your password manager: without it the restored node cannot decrypt stored credentials and every download link and access token changes. The manifest holds a fingerprint of the key (never the key), so `restore` notices a different `OBX_SECRET_KEY`. |
+| Images | `$OBX_DATA_DIR/blobs`, or your S3-compatible bucket | On local disk `node-rs backup` puts them in `DIR/blobs` as hard links (no extra space on the same disk; a copy otherwise). Content-addressed and never rewritten, so this is consistent with the database snapshot. In a bucket: see below. |
 | Configuration | the systemd override (`systemctl cat node-rs`), `/etc/node-rs/env`, or `compose.yaml` + `node-rs.env` | Small; keep a copy with the backup (encrypted: it can hold S3 keys). |
 
-`node-rs backup --to DIR` writes `obx.db`, `secret.key` and `backup.json` (version, schema version, where the images are) into an empty `DIR`.
+`node-rs backup --to DIR` writes `obx.db`, `blobs/` (local images), `secret.key` and `manifest.json` (version, schema version, node id, where the images are, key fingerprint) into a new, empty `DIR`. The format is node-go's: a node-go backup restores into node-rs and the other way round.
 
 ## Nightly offsite copy (restic)
 
@@ -39,7 +39,7 @@ set -eu
 SNAP=/var/lib/node-rs/backup-tonight
 rm -rf "$SNAP"
 sudo -u node-rs env OBX_DATA_DIR=/var/lib/node-rs node-rs backup --to "$SNAP"
-restic backup --tag node-rs "$SNAP" /var/lib/node-rs/blobs /etc/systemd/system/node-rs.service.d /etc/node-rs
+restic backup --tag node-rs "$SNAP" /etc/systemd/system/node-rs.service.d /etc/node-rs
 restic forget --tag node-rs --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune
 rm -rf "$SNAP"
 ```
@@ -57,12 +57,11 @@ Drill on a spare server or a local machine, never over the live portal:
 ```sh
 restic restore latest --tag node-rs --target /tmp/restore
 sudo systemctl stop node-rs                                   # on the real server only
-sudo install -o node-rs -g node-rs -m 0600 /tmp/restore/var/lib/node-rs/backup-tonight/obx.db /var/lib/node-rs/obx.db
-sudo install -o node-rs -g node-rs -m 0600 /tmp/restore/var/lib/node-rs/backup-tonight/secret.key /var/lib/node-rs/secret.key
-sudo rm -f /var/lib/node-rs/obx.db-wal /var/lib/node-rs/obx.db-shm
-sudo rsync -a /tmp/restore/var/lib/node-rs/blobs/ /var/lib/node-rs/blobs/
+sudo -u node-rs env OBX_DATA_DIR=/var/lib/node-rs node-rs restore --from /tmp/restore/var/lib/node-rs/backup-tonight --force
 sudo systemctl start node-rs
 ```
+
+`node-rs restore --from DIR` reads `manifest.json` (or the `backup.json` of the first node-rs builds), refuses a backup from a newer schema, refuses without `--force` to replace an existing database or to restore with a different `OBX_SECRET_KEY`, removes stale `-wal`/`-shm` files, then puts the database, the local images and `secret.key` in place. It does not start the node. With images in a bucket, nothing is copied for them: restore the bucket from its versions or replica. By hand, the same is: copy `obx.db` and `secret.key` into the data folder (mode 0600, owner node-rs), delete `obx.db-wal` and `obx.db-shm`, and `rsync -a DIR/blobs/` into `$OBX_DATA_DIR/blobs/`.
 
 Then check: log in to the admin, open a product with images in **View as retailer**, download an image, and fetch `/.well-known/obx`. Write down the date and how long it took. A drill that was not done is a backup you do not have.
 
