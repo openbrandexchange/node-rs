@@ -3,13 +3,13 @@
 **The Open Brand Exchange reference node, in Rust.** One program for a brand's own portal: retailers log in, find products and download images and article data; their shop software reads the same content through the standard [OBX Protocol](https://github.com/openbrandexchange/spec/blob/main/docs/protocol.md). You publish with a spreadsheet and photos, or let your own systems do it through the Ingest API.
 
 - One binary, or one Docker image. Linux first.
-- SQLite by default (no database server to run); images on local disk or any S3-compatible bucket.
+- SQLite (one file, no database server to run), with consistent online backups; images on local disk or any S3-compatible bucket.
 - Serves the bundled [admin-ui](https://github.com/openbrandexchange/admin-ui) for the brand and its retailers.
 - Short-lived signed download links; originals byte-for-byte; web, square and thumb renditions made on the server.
 - Checked against the [conformance suite](https://github.com/openbrandexchange/obx-go/tree/main/conformance) on every change.
 - Runs on a node-go data folder as it is ([docs/migrating.md](docs/migrating.md)).
 
-Status: under construction; what works and what is left is in [ROADMAP.md](ROADMAP.md).
+Status: at parity with node-go and conformant on every check of the conformance suite; not released yet. Details in [ROADMAP.md](ROADMAP.md).
 
 ## Run it locally
 
@@ -26,7 +26,7 @@ cargo run --release -- import --csv crates/obx-conformance/fixtures/maison-noor/
 
 ## Put it online
 
-Linux or Docker, with Caddy for HTTPS: [docs/hosting.md](docs/hosting.md). Back up offsite: [docs/backup.md](docs/backup.md). Settings: [docs/configuration.md](docs/configuration.md). Coming from node-go, node-php or node-ts: [docs/migrating.md](docs/migrating.md).
+Linux or Docker, with Caddy for HTTPS: [docs/hosting.md](docs/hosting.md). A public demo portal: [docs/demo.md](docs/demo.md). Back up offsite: [docs/backup.md](docs/backup.md). Settings: [docs/configuration.md](docs/configuration.md). Coming from node-go, node-php or node-ts: [docs/migrating.md](docs/migrating.md).
 
 ## Command line
 
@@ -47,9 +47,11 @@ node-rs check-config | healthcheck | version
 ## For developers
 
 ```sh
-cargo fmt --check && cargo clippy --all-targets -- -D warnings
-cargo test
+cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 scripts/conformance.sh          # obx-conformance against a fresh node (needs obx-conformance on PATH)
+e2e/run.sh                      # the admin-ui in a headless browser, with axe (needs Bun)
+NODE_RS_LOAD_TEST=1 cargo test load_test -- --nocapture   # 10 000 products (docs/performance.md)
 scripts/update-ui.sh ../admin-ui
 ```
 
@@ -72,4 +74,4 @@ Security problems: **security@openbrandexchange.com** ([SECURITY.md](SECURITY.md
 
 ## Licence
 
-[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). The embedded admin-ui is Apache-2.0; the spec files are CC-BY-4.0. See [NOTICE](NOTICE).
+The node: [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). The library crates in `crates/` are Apache-2.0 (each has its own LICENSE). The embedded admin-ui is Apache-2.0; the spec files are CC-BY-4.0. See [NOTICE](NOTICE).
