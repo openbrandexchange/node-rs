@@ -1091,7 +1091,8 @@ mod tests {
     fn refusal_rules() {
         let none: Option<&Map<String, Value>> = None;
         let obj = |v: Value| v.as_object().cloned().unwrap();
-        let cases: Vec<(Method, &str, Option<Map<String, Value>>, Option<&str>)> = vec![
+        type Case<'a> = (Method, &'a str, Option<Map<String, Value>>, Option<&'a str>);
+        let cases: Vec<Case> = vec![
             (Method::GET, "/admin/api/portal/products", None, None),
             (
                 Method::GET,
