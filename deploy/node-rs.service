@@ -1,0 +1,43 @@
+# systemd unit for node-rs (docs/hosting.md).
+#
+#   sudo useradd --system --home /var/lib/node-rs --create-home --shell /usr/sbin/nologin node-rs
+#   sudo cp node-rs.service /etc/systemd/system/
+#   sudo systemctl edit node-rs     # [Service] Environment=OBX_PUBLIC_URL=https://portal.yourbrand.com
+#   sudo systemctl enable --now node-rs
+#   journalctl -u node-rs           # the one-time setup code
+#
+# Other settings: Environment= lines in `systemctl edit`, or /etc/node-rs/env
+# (KEY=value per line, mode 0600: it may hold OBX_SECRET_KEY and S3 keys).
+[Unit]
+Description=Open Brand Exchange node (node-rs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=node-rs
+Group=node-rs
+ExecStart=/usr/local/bin/node-rs serve
+Environment=OBX_DATA_DIR=/var/lib/node-rs
+Environment=OBX_BIND=127.0.0.1
+Environment=PORT=8080
+# Caddy (or another reverse proxy) on the same machine terminates HTTPS.
+Environment=OBX_TRUST_PROXY=true
+EnvironmentFile=-/etc/node-rs/env
+Restart=on-failure
+RestartSec=2
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/node-rs
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -2,17 +2,101 @@
 name = "node-rs"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "AGPL-3.0-only"
 description = "Open Brand Exchange reference node: publish as a brand, subscribe as a retailer. One binary."
 repository = "https://github.com/openbrandexchange/node-rs"
 publish = false
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs", "time", "sync"] }
-axum = "0.8"
+obx-types = { path = "crates/obx-types", features = ["validate", "axum"] }
+obx-auth = { path = "crates/obx-auth" }
+obx-sign = { path = "crates/obx-sign" }
+obx-feed = { path = "crates/obx-feed" }
+obx-axum = { path = "crates/obx-axum" }
+obx-conformance = { path = "crates/obx-conformance" }
+# The import format crate was called obx-format inside node-rs.
+obx-format = { package = "obx-ingest", path = "crates/obx-ingest" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs", "time", "sync", "net", "io-util"] }
+axum = { version = "0.8", features = ["multipart"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { version = "0.43", features = ["bundled", "backup"] }
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+base64 = "0.22"
+rand = "0.9"
+argon2 = "0.5"
+aes-gcm = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "tiff"] }
+object_store = { version = "0.12", features = ["aws"] }
+bytes = "1"
+crc32fast = "1"
+futures = "0.3"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+regex = "1"
+jsonschema = { version = "0.33", default-features = false }
+rust-embed = "8"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+url = "2"
+mime_guess = "2"
+multer = "3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json", "stream", "http2"] }
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+russh-sftp = "4"
+jiff = { version = "1", default-features = false, features = ["std", "tzdb-bundle-always"] }
+percent-encoding = "2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-native-certs = "0.8"
+tokio-postgres = { version = "0.7", default-features = false, features = ["runtime"] }
+tokio-postgres-rustls = "0.13"
+
+[dev-dependencies]
+obx-client = { path = "crates/obx-client" }
+obx-conformance = { path = "crates/obx-conformance" }
+tower = { version = "0.5", features = ["util"] }
 
 [profile.release]
 lto = "thin"
 codegen-units = 4
 strip = true
+
+[workspace]
+members = [".", "crates/*"]
+
+# The library crates (crates/*) are Apache-2.0, so any OBX implementation can
+# use them; the node itself (this package) stays AGPL-3.0-only.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/openbrandexchange/node-rs"
+homepage = "https://openbrandexchange.com"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Image decoding and resizing are slow without optimisation; dependencies are
+# built optimised in debug builds too (tests and the conformance run).
+[profile.dev.package."*"]
+opt-level = 2
+
+[lints]
+workspace = true
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# Problem (RFC 9457 document) is the error type of every handler; boxing it
+# everywhere buys nothing.
+result_large_err = "allow"
+collapsible_if = "allow"
+too_many_arguments = "allow"

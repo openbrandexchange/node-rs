@@ -1,0 +1,6 @@
+# HTTPS in front of node-rs with automatic Let's Encrypt certificates.
+# Linux: put this in /etc/caddy/Caddyfile with your domain instead of {$DOMAIN}.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy {$UPSTREAM:127.0.0.1:8080}
+}

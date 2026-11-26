@@ -9,6 +9,11 @@ the terms of the GNU Affero General Public License, version 3 only (see
 LICENSE). If you run a modified version for others over a network, you must
 offer them its source code (AGPL-3.0 section 13).
 
+The library crates in crates/ (obx-types, obx-auth, obx-sign, obx-feed,
+obx-ingest, obx-axum, obx-client, obx-conformance) are licensed under the
+Apache License 2.0 instead (crates/*/LICENSE), so other implementations of
+Open Brand Exchange can use them.
+
 The copyright of the publisher and the name "Open Brand Exchange" are to be
 transferred to the Open Brand Exchange Foundation, a Dutch stichting that is
 being set up (see https://github.com/openbrandexchange/spec/blob/main/docs/governance.md).
@@ -20,8 +25,9 @@ This product includes:
 - The Open Brand Exchange admin UI (ui/dist), Apache-2.0,
   https://github.com/openbrandexchange/admin-ui. Its own licence and
   third-party notices are shipped with it in ui/dist.
-- Vocabularies and fixtures of the Open Brand Exchange specification
-  (spec/), CC-BY-4.0, "Open Brand Exchange specification, © Open Brand
+- Schemas, vocabularies and fixtures of the Open Brand Exchange
+  specification (crates/obx-types/spec/, crates/obx-conformance/fixtures/,
+  crates/obx-types/tests/branding-fallback.json), CC-BY-4.0, "Open Brand Exchange specification, © Open Brand
   Exchange Foundation (in formation) and contributors",
   https://github.com/openbrandexchange/spec.
 - Rust crates compiled into the binary, under permissive licences (MIT,

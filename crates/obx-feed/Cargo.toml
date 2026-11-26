@@ -1,0 +1,20 @@
+[package]
+name = "obx-feed"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["obx", "open-brand-exchange", "change-feed", "pagination"]
+categories = ["data-structures", "web-programming"]
+description = "Open Brand Exchange (OBX) change feed: cursor format and the snapshot-then-live paging rules, over a storage trait"
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+obx-auth = { version = "0.1.0", path = "../obx-auth" }
+serde = { workspace = true }
+serde_json = { workspace = true }

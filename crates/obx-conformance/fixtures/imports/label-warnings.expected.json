@@ -1,0 +1,62 @@
+{
+  "description": "Conformance I-IMP-8. Send label-warnings.csv as the import's products.csv with dry_run: true (mode upsert). The job succeeds, nothing is written (no change entries, ML-8001 to ML-8006 do not exist afterwards), there are no errors, and the ImportRowErrors whose obx_error is one of the four label completeness codes or material_unknown are exactly these, in this order (other warnings are not checked). ML-8006 is complete and gets none. ML-8007 has a material code outside vocabularies/materials.json (material_unknown, value = the code). ML-8008 has fibres without a percentage: its parts are not checked for the sum. ML-8009 states more than 100 % in one part, also with a fibre without a percentage.",
+  "codes": [
+    "fibre_composition_missing",
+    "animal_origin_unknown",
+    "footwear_materials_missing",
+    "fibre_percentages_not_100",
+    "material_unknown"
+  ],
+  "warnings": [
+    {
+      "file": "products.csv",
+      "row": 1,
+      "column": "materials",
+      "severity": "warning",
+      "obx_error": "fibre_composition_missing"
+    },
+    {
+      "file": "products.csv",
+      "row": 2,
+      "column": "contains_animal_origin",
+      "severity": "warning",
+      "obx_error": "animal_origin_unknown"
+    },
+    {
+      "file": "products.csv",
+      "row": 3,
+      "column": "footwear_materials",
+      "severity": "warning",
+      "obx_error": "footwear_materials_missing"
+    },
+    {
+      "file": "products.csv",
+      "row": 4,
+      "column": "materials",
+      "severity": "warning",
+      "obx_error": "fibre_percentages_not_100"
+    },
+    {
+      "file": "products.csv",
+      "row": 5,
+      "column": "footwear_materials",
+      "severity": "warning",
+      "obx_error": "footwear_materials_missing"
+    },
+    {
+      "file": "products.csv",
+      "row": 7,
+      "column": "materials",
+      "severity": "warning",
+      "obx_error": "material_unknown",
+      "value": "katoen"
+    },
+    {
+      "file": "products.csv",
+      "row": 9,
+      "column": "materials",
+      "severity": "warning",
+      "obx_error": "fibre_percentages_not_100"
+    }
+  ]
+}

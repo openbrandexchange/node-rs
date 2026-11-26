@@ -1,0 +1,217 @@
+{
+  "description": "Conformance I-IMP-7. Apply the files in order, each sent as the import's products.csv (mode upsert, no images, no assets.csv), to a node that holds exactly the import of fixtures/maison-noor. counts: ImportRun.counts (other count fields not checked). errors: the ImportRowErrors with severity error, in order (warnings not checked); when an error has detail_prefix, its detail starts with that text (detail_prefix is not a member of the ImportRowError). changes: the /changes entries the import produced, in order. products/variants: fields of the protocol objects afterwards (by external_id), matched like fixtures/expected.",
+  "cases": [
+    {
+      "file": "1-feature-update.csv",
+      "what": "A file with one feature column changes only that feature; the other features of MN-1008 stay (rule 9, per key).",
+      "counts": {
+        "rows": 1,
+        "created": 0,
+        "updated": 1,
+        "unchanged": 0,
+        "errors": 0
+      },
+      "errors": [],
+      "changes": [
+        {
+          "type": "product",
+          "op": "upsert",
+          "external_id": "MN-1008"
+        }
+      ],
+      "products": {
+        "MN-1008": {
+          "features": {
+            "shell": "hard",
+            "wheels": 2,
+            "lock": "tsa_combination",
+            "expandable": true,
+            "closure": "zip"
+          }
+        }
+      },
+      "variants": {}
+    },
+    {
+      "file": "2-feature-clear.csv",
+      "what": "An empty cell in a feature column removes that feature only.",
+      "counts": {
+        "rows": 1,
+        "created": 0,
+        "updated": 1,
+        "unchanged": 0,
+        "errors": 0
+      },
+      "errors": [],
+      "changes": [
+        {
+          "type": "product",
+          "op": "upsert",
+          "external_id": "MN-1008"
+        }
+      ],
+      "products": {
+        "MN-1008": {
+          "features": {
+            "shell": "hard",
+            "lock": "tsa_combination",
+            "expandable": true,
+            "closure": "zip"
+          }
+        }
+      },
+      "variants": {}
+    },
+    {
+      "file": "3-measurement-update.csv",
+      "what": "One measurement column with a decimal comma changes only that measurement of that variant; the product is unchanged. The row has no variant_id and no size: the variant is found by its GTIN and keeps its external id (1.2.1).",
+      "counts": {
+        "rows": 1,
+        "created": 0,
+        "updated": 1,
+        "unchanged": 1,
+        "errors": 0
+      },
+      "errors": [],
+      "changes": [
+        {
+          "type": "variant",
+          "op": "upsert",
+          "external_id": "MN-1008-BLK-CABIN"
+        }
+      ],
+      "products": {},
+      "variants": {
+        "MN-1008-BLK-CABIN": {
+          "measurements": {
+            "height_cm": 55,
+            "width_cm": 40,
+            "depth_cm": 20,
+            "weight_kg": 2.7,
+            "volume_l": 36,
+            "volume_expanded_l": 42
+          }
+        }
+      }
+    },
+    {
+      "file": "4-fibre-flags.csv",
+      "what": "The qualifier form gives the same materials as the 0.1 key recycled_polyester in the fixture: unchanged, no change entries.",
+      "counts": {
+        "rows": 1,
+        "created": 0,
+        "updated": 0,
+        "unchanged": 1,
+        "errors": 0
+      },
+      "errors": [],
+      "changes": [],
+      "products": {},
+      "variants": {}
+    },
+    {
+      "file": "5-invalid.csv",
+      "what": "Each row has one value outside the rules: every row is skipped with an error, nothing is written, the job succeeds. Row 5 writes percentages with a decimal comma: the comma separates fibres, so the detail of its error starts with detail_prefix.",
+      "counts": {
+        "rows": 5,
+        "created": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "errors": 5
+      },
+      "errors": [
+        {
+          "file": "products.csv",
+          "row": 1,
+          "column": "feature:wheels",
+          "severity": "error",
+          "obx_error": "validation_failed",
+          "value": "3"
+        },
+        {
+          "file": "products.csv",
+          "row": 2,
+          "column": "height_cm",
+          "severity": "error",
+          "obx_error": "validation_failed",
+          "value": "30 cm"
+        },
+        {
+          "file": "products.csv",
+          "row": 3,
+          "column": "color_family",
+          "severity": "error",
+          "obx_error": "validation_failed",
+          "value": "navy"
+        },
+        {
+          "file": "products.csv",
+          "row": 4,
+          "column": "footwear_materials",
+          "severity": "error",
+          "obx_error": "validation_failed",
+          "value": "upper: plastic"
+        },
+        {
+          "file": "products.csv",
+          "row": 5,
+          "column": "materials",
+          "severity": "error",
+          "obx_error": "validation_failed",
+          "detail_prefix": "materials: decimal comma",
+          "value": "main: 95,5% polyester, 4,5% elastane"
+        }
+      ],
+      "changes": [],
+      "products": {},
+      "variants": {}
+    },
+    {
+      "file": "6-restore.csv",
+      "what": "maison-noor/products.csv again (the same bytes): restores wheels 4 and weight 2.6; everything else is unchanged.",
+      "counts": {
+        "rows": 46,
+        "created": 0,
+        "updated": 2,
+        "unchanged": 55,
+        "errors": 0
+      },
+      "errors": [],
+      "changes": [
+        {
+          "type": "product",
+          "op": "upsert",
+          "external_id": "MN-1008"
+        },
+        {
+          "type": "variant",
+          "op": "upsert",
+          "external_id": "MN-1008-BLK-CABIN"
+        }
+      ],
+      "products": {
+        "MN-1008": {
+          "features": {
+            "shell": "hard",
+            "wheels": 4,
+            "lock": "tsa_combination",
+            "expandable": true,
+            "closure": "zip"
+          }
+        }
+      },
+      "variants": {
+        "MN-1008-BLK-CABIN": {
+          "measurements": {
+            "height_cm": 55,
+            "width_cm": 40,
+            "depth_cm": 20,
+            "weight_kg": 2.6,
+            "volume_l": 36,
+            "volume_expanded_l": 42
+          }
+        }
+      }
+    }
+  ]
+}

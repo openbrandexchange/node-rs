@@ -1,0 +1,26 @@
+{
+  "style_number": "MN-1007",
+  "name": {
+    "en": "Linen Shirt"
+  },
+  "materials": [
+    {
+      "part": {
+        "code": "main"
+      },
+      "fibers": [
+        {
+          "material": {
+            "code": "linen",
+            "x-noor-mill": "Mill 7"
+          },
+          "percentage": 100
+        }
+      ]
+    }
+  ],
+  "x-noor-fabric-weight-gsm": 180,
+  "x-noor-care-note": {
+    "en": "Wrinkles are part of the look"
+  }
+}

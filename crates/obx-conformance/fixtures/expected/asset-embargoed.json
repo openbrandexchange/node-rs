@@ -1,0 +1,84 @@
+{
+  "id": "{{id}}",
+  "external_id": "MN-1002_BLK_2",
+  "product_id": "{{id}}",
+  "brand_id": "{{id}}",
+  "media_type": "image",
+  "color_code": "BLK",
+  "variant_ids": null,
+  "role": "packshot",
+  "view": "back",
+  "position": 2,
+  "filename": "MN-1002_BLK_2_back.png",
+  "alt_text": null,
+  "content_type": "image/png",
+  "width": 1200,
+  "height": 1500,
+  "bytes": 11999,
+  "sha256": "ac3eee80995780a99efce15b3a49c6ca4ed9d1d45f0273b68e52505baa94d90d",
+  "rights": {
+    "license": "retailer-use",
+    "license_text": null,
+    "channels": [
+      "webshop",
+      "marketplace",
+      "social"
+    ],
+    "territories": null,
+    "embargo_until": "2030-01-01T00:00:00Z",
+    "expires_at": null,
+    "credit": "Photo: MAISON NOOR Studio",
+    "model_release": null
+  },
+  "provenance": {
+    "ai_generated": false,
+    "ai_edited": false,
+    "source": "photo",
+    "c2pa": "none",
+    "c2pa_manifest_url": null,
+    "generator": null
+  },
+  "renditions": {
+    "original": {
+      "name": "original",
+      "url": "{{url}}",
+      "url_expires_at": "{{datetime|null}}",
+      "content_type": "image/png",
+      "width": 1200,
+      "height": 1500,
+      "bytes": 11999,
+      "sha256": "ac3eee80995780a99efce15b3a49c6ca4ed9d1d45f0273b68e52505baa94d90d"
+    },
+    "web": {
+      "name": "web",
+      "url": "{{url}}",
+      "url_expires_at": "{{datetime|null}}",
+      "content_type": "image/jpeg",
+      "width": 1200,
+      "height": 1500,
+      "bytes": "{{int}}",
+      "sha256": "{{sha256}}"
+    },
+    "square": {
+      "name": "square",
+      "url": "{{url}}",
+      "url_expires_at": "{{datetime|null}}",
+      "content_type": "image/jpeg",
+      "width": 1500,
+      "height": 1500,
+      "bytes": "{{int}}",
+      "sha256": "{{sha256}}"
+    },
+    "thumb": {
+      "name": "thumb",
+      "url": "{{url}}",
+      "url_expires_at": "{{datetime|null}}",
+      "content_type": "image/jpeg",
+      "width": 480,
+      "height": 600,
+      "bytes": "{{int}}",
+      "sha256": "{{sha256}}"
+    }
+  },
+  "updated_at": "{{datetime}}"
+}
