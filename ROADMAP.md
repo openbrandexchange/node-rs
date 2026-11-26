@@ -8,7 +8,7 @@ node-rs replaces node-go, node-php and node-ts as the single reference node of O
 
 **node-go data folder:** node-rs runs on a node-go SQLite data folder as it is: same schema and migrations, blob layout, secret-key derivation, token, cursor and signed-URL formats, argon2id passwords, backups. `scripts/test-node-go-data.py` (CI job `node-go-data`) sets up node-go, imports the fixtures, then checks that node-rs accepts node-go's access token, client secret, `/changes` cursor and admin password and serves identical products. node-go on PostgreSQL moves with `node-rs import-postgres` ([docs/migrating.md](docs/migrating.md)).
 
-**Library crates:** the protocol logic is in storage- and framework-agnostic crates under `crates/` (Apache-2.0, `#![forbid(unsafe_code)]`, MSRV 1.88 (the node itself needs 1.89), docs and examples, `cargo publish --dry-run` in CI): `obx-types`, `obx-auth`, `obx-sign`, `obx-feed`, `obx-ingest`, `obx-axum`, `obx-client`, `obx-conformance`. They are **not published** on crates.io; publishing is the maintainer's decision.
+**Library crates:** the protocol logic is in storage- and framework-agnostic crates under `crates/` (Apache-2.0, `#![forbid(unsafe_code)]`, MSRV 1.88 (the node itself needs 1.89), docs and examples, `cargo publish --dry-run` in CI): `obx-types`, `obx-auth`, `obx-sign`, `obx-feed`, `obx-ingest`, `obx-axum`, `obx-client`, `obx-conformance`. They are published on crates.io from each version tag (`.github/workflows/publish-crates.yml`, in dependency order, obx-types first).
 
 ## Parity with node-go
 
@@ -66,17 +66,15 @@ Nothing of node-go's feature set is left. What remains is small, or a step for t
 1. **Dependencies:** `object_store` 0.12 still pulls in an old `quick-xml` with an advisory (ignored with its reason in `deny.toml`); moving to `object_store` 0.14 needs `reqwest` 0.13 across the node.
 2. **Rate limits** are per process (in memory); enough for one instance, which is the supported setup.
 3. **Untested combinations:** Google Cloud Storage through its S3 endpoint; `import-postgres` runs in CI only, not against a production-sized database.
-4. **Maintainer steps, not done:** tag `v0.1.0` (the release workflow builds the binaries and the image), publish the crates, move demo.openbrandexchange.com to node-rs ([docs/demo.md](docs/demo.md)), deprecate node-go, node-php and node-ts, and archive them after one release has run in production.
+4. **Maintainer steps:** `v0.1.0` is tagged (the release workflow builds the binaries and the image) and node-go, node-php and node-ts are deprecated. Still to do: the crates.io token (`CARGO_REGISTRY_TOKEN`, then the publish workflow runs), the demo host and DNS for demo.openbrandexchange.com ([docs/demo.md](docs/demo.md)), and archiving the old nodes after one release has run in production.
 
 ## Decisions taken (Richard, November 2026)
 
 - SQLite only, plus offsite backups; a one-time `node-rs import-postgres` for node-go users on PostgreSQL.
 - HTTPS through Caddy in front; no built-in TLS.
-- node-go, node-php and node-ts are deprecated once the portal, e-mail and exports are in (they are), and archived after one node-rs release has run in production. Neither has been done.
-- The first release `v0.1.0` comes when the portal part is in (it is). Tagging is the maintainer's step.
+- node-go, node-php and node-ts are deprecated once the portal, e-mail and exports are in (they are), and archived after one node-rs release has run in production. They are deprecated (26-11); archiving waits for that production release.
+- The first release is `v0.1.0` (26-11). Licences decided: the library crates Apache-2.0, the node AGPL-3.0-only.
 
 ## Decisions for the maintainer
 
-- **Licence of the library crates.** They are Apache-2.0 (like obx-go and admin-ui), so any implementation, open or closed, can use them; the node stays AGPL-3.0-only. Confirm before publishing.
-- **Publishing the crates** on crates.io (`cargo publish --workspace --exclude node-rs`), and under which owner.
 - **A data import for node-php and node-ts** (retailers, users, API keys) or only the catalog re-import described in docs/migrating.md.

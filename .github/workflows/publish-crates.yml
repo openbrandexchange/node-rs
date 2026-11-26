@@ -1,0 +1,72 @@
+# Publishes the obx-* library crates (Apache-2.0) to crates.io for a version tag.
+# The node itself (node-rs, AGPL-3.0-only) has `publish = false` and is never published.
+#
+# Needs the repository secret CARGO_REGISTRY_TOKEN (a crates.io API token with the
+# publish-new and publish-update scopes). Without it the job is skipped, so a tag
+# never fails on it. After adding the secret, publish an existing tag with:
+#   gh workflow run publish-crates.yml -R openbrandexchange/node-rs --ref v0.1.0
+name: Publish crates
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-crates
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - name: Token present?
+        id: token
+        run: |
+          if [ -n "$CARGO_REGISTRY_TOKEN" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CARGO_REGISTRY_TOKEN is not set; crates not published"
+          fi
+      - if: steps.token.outputs.ok == 'true'
+        uses: actions/checkout@v4
+      - if: steps.token.outputs.ok == 'true'
+        uses: dtolnay/rust-toolchain@stable
+      - name: Tag matches the workspace version
+        if: steps.token.outputs.ok == 'true' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          have="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="obx-types"))')"
+          [ "$want" = "$have" ] || { echo "tag $GITHUB_REF_NAME but crates are $have"; exit 1; }
+      # cargo publishes the workspace in dependency order (obx-types first, then
+      # obx-auth, obx-sign, obx-feed, obx-ingest, obx-axum, obx-client,
+      # obx-conformance) and waits for each to be in the index before the next.
+      # Crates already on crates.io at this version are skipped, so a rerun
+      # after a partial publish finishes the rest.
+      - name: cargo publish
+        if: steps.token.outputs.ok == 'true'
+        run: |
+          set -euo pipefail
+          for c in $(cargo metadata --no-deps --format-version 1 | python3 -c '
+          import json, sys
+          m = json.load(sys.stdin)
+          pk = {p["name"]: p for p in m["packages"] if p["name"] != "node-rs"}
+          order, seen = [], set()
+          def visit(n):
+              if n in seen: return
+              seen.add(n)
+              for d in pk[n]["dependencies"]:
+                  if d["name"] in pk and d.get("kind") is None: visit(d["name"])
+              order.append(n)
+          for n in sorted(pk): visit(n)
+          print(" ".join(order))'); do
+            v="$(cargo metadata --no-deps --format-version 1 | python3 -c "import json,sys; print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='$c'))")"
+            if curl -fsS -A "openbrandexchange-release (github actions)" "https://crates.io/api/v1/crates/$c/$v" >/dev/null 2>&1; then
+              echo "$c $v already on crates.io"; continue
+            fi
+            echo "publishing $c $v"
+            cargo publish -p "$c" --locked
+          done

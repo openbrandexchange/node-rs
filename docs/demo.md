@@ -82,8 +82,10 @@ process). Behind Caddy set `OBX_TRUST_PROXY=true`, so the limits count the visit
 3. Start it, open the address and check the banner, both sign-in buttons, the public key
    (`curl -u obxc_demo-portal-read-only:obxs_demo-portal-read-only-public -d grant_type=client_credentials https://demo.openbrandexchange.com/obx/v1/oauth/token`)
    and a refused action (creating an API key answers `403` with `x-obx-demo`).
-4. Point the DNS record of `demo.openbrandexchange.com` at the new server (Caddy obtains the certificate on the
-   first request), then switch off the node-ts deployment. The public key, the account ids and the refusal
+4. Point the DNS record of `demo.openbrandexchange.com` at the new server: in the Cloudflare account that holds
+   the zone `openbrandexchange.com`, DNS → Records → Add record, type `A` (and `AAAA` for IPv6), name `demo`,
+   the server's address, proxy status **DNS only** (grey cloud), so Caddy obtains its own certificate on the
+   first request. A proxied record works too once the zone's SSL/TLS mode is Full (strict), then switch off the node-ts deployment. The public key, the account ids and the refusal
    rules are the same, so links and scripts that use the demo keep working. Sessions do not move: visitors
    sign in again with one click.
 

@@ -58,7 +58,7 @@ scripts/update-ui.sh ../admin-ui
 - `src/catalog.rs`: every catalog write, visibility and the change-feed entries (ingest.md §8).
 - `src/http/`: protocol, change feed, Ingest API, admin API, the UI.
 - `src/imports.rs`, `src/jobs.rs`, `src/uploads.rs`: the canonical import, background jobs, resumable uploads.
-- `crates/`: the reusable library crates, Apache-2.0, storage- and framework-agnostic, ready for crates.io (not published yet):
+- `crates/`: the reusable library crates, Apache-2.0, storage- and framework-agnostic, published on crates.io from each version tag (`.github/workflows/publish-crates.yml`):
   - `obx-types`: objects, problem documents, ids, GTINs, vocabularies, JSON Schema validation;
   - `obx-auth`: tokens, constant-time comparison, passwords, derived keys, access tokens, client credentials, signed cursors;
   - `obx-sign`: windowed signed asset URLs and webhook signatures;
