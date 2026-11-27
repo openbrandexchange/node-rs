@@ -9,7 +9,9 @@
 //! * [`IngestScript`] and [`replay`]: the 18-operation ingest script with
 //!   the expected result of each operation and the live change entries it
 //!   must produce, replayed against your implementation through the
-//!   [`IngestTarget`] trait.
+//!   [`IngestTarget`] trait;
+//! * [`LanguageCases`] and [`check_language_case`]: the language selection
+//!   requests (spec proposal 0010) and a check of each response.
 //!
 //! The HTTP-level suite (every profile, every check) is `obx-conformance`
 //! from obx-go; this crate is for in-process tests.
@@ -239,6 +241,163 @@ pub fn replay<T: IngestTarget>(t: &mut T) -> Vec<String> {
     diffs
 }
 
+/// One request of `expected/language-selection.json` (spec proposal 0010,
+/// conformance P-LANG-1 to P-LANG-3): `GET /obx/v1/products/{id}` of
+/// [`LanguageCases::product`] with `lang` and/or `Accept-Language`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LanguageCase {
+    pub name: String,
+    pub request: LanguageRequest,
+    /// `400` for a malformed `lang`; absent = `200`.
+    #[serde(default)]
+    pub status: Option<u16>,
+    /// The `Content-Language` header; `None` = no selection (the 0.3 response).
+    #[serde(default)]
+    pub content_language: Option<String>,
+    /// `language_fallbacks` of the product, of every variant and of every
+    /// asset; `None` = the member is absent.
+    #[serde(default)]
+    pub language_fallbacks: Option<LanguageFallbacks>,
+    /// Fields of the response by JSON Pointer.
+    #[serde(default)]
+    pub values: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LanguageRequest {
+    #[serde(default)]
+    pub lang: Option<String>,
+    #[serde(default)]
+    pub accept_language: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LanguageFallbacks {
+    pub product: Value,
+    pub variants: Value,
+    pub assets: Value,
+}
+
+/// `expected/language-selection.json`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LanguageCases {
+    /// The style number of the product the cases read (MN-1001).
+    pub product: String,
+    /// The content languages the node is set up with, first = default.
+    pub languages: Vec<String>,
+    /// The discovery `selectable_languages` the cases assume.
+    pub selectable_languages: Vec<String>,
+    pub cases: Vec<LanguageCase>,
+}
+
+impl LanguageCases {
+    pub fn load() -> LanguageCases {
+        serde_json::from_value(json_file("expected/language-selection.json"))
+            .expect("language-selection.json")
+    }
+}
+
+fn is_text(v: &Value) -> bool {
+    v.as_object().is_some_and(|m| {
+        !m.is_empty()
+            && m.values().all(Value::is_string)
+            && m.keys().all(|k| {
+                !k.starts_with("x-")
+                    && k.len() <= 11
+                    && k.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+            })
+    })
+}
+
+fn texts_with_more_than_one(v: &Value, ptr: &str, out: &mut Vec<String>) {
+    match v {
+        Value::Object(m) if is_text(v) => {
+            if m.len() != 1 {
+                out.push(ptr.to_owned());
+            }
+        }
+        Value::Object(m) => m
+            .iter()
+            .filter(|(k, _)| !k.starts_with("x-"))
+            .for_each(|(k, x)| texts_with_more_than_one(x, &format!("{ptr}/{k}"), out)),
+        Value::Array(a) => a
+            .iter()
+            .enumerate()
+            .for_each(|(i, x)| texts_with_more_than_one(x, &format!("{ptr}/{i}"), out)),
+        _ => {}
+    }
+}
+
+/// Checks one response against a [`LanguageCase`]; the differences, empty
+/// when it passes. `body` is the ProductDetail (or the problem for `400`).
+pub fn check_language_case(
+    case: &LanguageCase,
+    status: u16,
+    content_language: Option<&str>,
+    body: &Value,
+) -> Vec<String> {
+    let mut d = Vec::new();
+    let want = case.status.unwrap_or(200);
+    if status != want {
+        return vec![format!("{}: status {status}, want {want}", case.name)];
+    }
+    if want != 200 {
+        if body["obx_error"] != "invalid_request" {
+            d.push(format!(
+                "{}: obx_error {}, want invalid_request",
+                case.name, body["obx_error"]
+            ));
+        }
+        return d;
+    }
+    if content_language != case.content_language.as_deref() {
+        d.push(format!(
+            "{}: Content-Language {content_language:?}, want {:?}",
+            case.name, case.content_language
+        ));
+    }
+    match &case.language_fallbacks {
+        None => {
+            if body.get("language_fallbacks").is_some() {
+                d.push(format!(
+                    "{}: language_fallbacks without a selection",
+                    case.name
+                ));
+            }
+        }
+        Some(f) => {
+            if body["language_fallbacks"] != f.product {
+                d.push(format!(
+                    "{}: product language_fallbacks {}, want {}",
+                    case.name, body["language_fallbacks"], f.product
+                ));
+            }
+            for (k, want) in [("variants", &f.variants), ("assets", &f.assets)] {
+                for o in body[k].as_array().into_iter().flatten() {
+                    if &o["language_fallbacks"] != want {
+                        d.push(format!(
+                            "{}: {} {} language_fallbacks {}, want {want}",
+                            case.name, k, o["external_id"], o["language_fallbacks"]
+                        ));
+                    }
+                }
+            }
+            let mut many = Vec::new();
+            texts_with_more_than_one(body, "", &mut many);
+            if !many.is_empty() {
+                d.push(format!("{}: more than one language in {many:?}", case.name));
+            }
+        }
+    }
+    for (ptr, want) in &case.values {
+        let got = body.pointer(ptr).cloned().unwrap_or(Value::Null);
+        if &got != want {
+            d.push(format!("{}: {ptr} is {got}, want {want}", case.name));
+        }
+    }
+    d
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -247,5 +406,32 @@ mod tests {
         assert_eq!(s.operations.len(), 18);
         assert_eq!(s.expected.len(), 18);
         assert!(!s.changes.is_empty() && !s.blobs.is_empty());
+    }
+
+    #[test]
+    fn language_cases_load_and_check() {
+        let l = super::LanguageCases::load();
+        assert_eq!((l.product.as_str(), l.cases.len()), ("MN-1001", 10));
+        let bad = &l.cases.iter().find(|c| c.status == Some(400)).unwrap();
+        assert!(
+            super::check_language_case(
+                bad,
+                400,
+                None,
+                &serde_json::json!({"obx_error": "invalid_request"})
+            )
+            .is_empty()
+        );
+        let none = l
+            .cases
+            .iter()
+            .find(|c| c.content_language.is_none() && c.status.is_none())
+            .unwrap();
+        let full = super::json_file("expected/product-MN-1001.json");
+        assert!(super::check_language_case(none, 200, None, &full).is_empty());
+        assert!(
+            !super::check_language_case(&l.cases[0], 200, None, &full).is_empty(),
+            "the full response is not narrowed"
+        );
     }
 }

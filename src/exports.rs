@@ -122,6 +122,16 @@ pub async fn h_create(State(app): State<App>, headers: HeaderMap, body: Bytes) -
             format!("The request body is not valid: {e}"),
         )
     })?;
+    if let Some(l) = req.lang.as_deref() {
+        if !l.eq_ignore_ascii_case(obx_types::lang::UNIVERSAL)
+            && obx_types::lang::canonical_tag(l).is_none()
+        {
+            return Err(Problem::new(
+                "validation_failed",
+                "lang must be a BCP 47 language tag or `universal`.",
+            ));
+        }
+    }
     for rn in &req.renditions {
         if rn == "original" && !v.original_allowed {
             return Err(Problem::new(
@@ -711,6 +721,22 @@ async fn run(app: &App, j: &Job) -> std::result::Result<Value, String> {
         crate::jobs::progress(app, &j.id, done, Some(total)).await;
     }
     zp.finish().map_err(|e| e.to_string())?;
+    if req.lang.is_some() {
+        let s = app
+            .settings()
+            .await
+            .map_err(|p| p.detail_str().to_string())?;
+        let languages = s.content_languages();
+        let selectable = crate::http::protocol::selectable_languages(&s);
+        if let Some(sel) =
+            obx_types::lang::select(req.lang.as_deref(), None, &selectable, &languages)
+                .map_err(|p| p.detail_str().to_string())?
+        {
+            lines
+                .iter_mut()
+                .for_each(|l| obx_types::lang::narrow_change(l, &sel, &languages));
+        }
+    }
     let mut manifest = Vec::new();
     let header = json!({"type": "header", "export_id": j.id, "created_at": j.created_at, "obx_version": crate::app::OBX_VERSION,
         "changes_cursor": cursor, "counts": counts});

@@ -2323,6 +2323,7 @@ name = "obx-feed"
 version = "0.1.0"
 dependencies = [
  "obx-auth",
+ "obx-types",
  "serde",
  "serde_json",
 ]

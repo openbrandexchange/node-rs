@@ -413,6 +413,72 @@ fn product_etag(p: &Value) -> String {
     crate::catalog::hash_hex(parts.join("|").as_bytes())[..32].to_string()
 }
 
+// ---- language selection (protocol.md §2.3) ---------------------------------------------
+
+/// Discovery `selectable_languages`: the content languages, then the
+/// languages the vocabularies have term names in.
+pub fn selectable_languages(s: &Settings) -> Vec<String> {
+    obx_types::lang::selectable_languages(&s.content_languages(), obx_types::vocab::languages())
+}
+
+/// The language selection of one protocol request.
+pub struct Lang {
+    pub sel: Option<obx_types::lang::Selection>,
+    pub languages: Vec<String>,
+}
+
+impl Lang {
+    /// `?lang=`, else `Accept-Language`; a malformed `lang` is `400 invalid_request`.
+    pub fn of(s: &Settings, q: &HashMap<String, String>, headers: &HeaderMap) -> Result<Lang> {
+        let languages = s.content_languages();
+        let al = headers
+            .get(header::ACCEPT_LANGUAGE)
+            .and_then(|v| v.to_str().ok());
+        let sel = obx_types::lang::select(
+            q.get("lang").map(String::as_str),
+            al,
+            &selectable_languages(s),
+            &languages,
+        )?;
+        Ok(Lang { sel, languages })
+    }
+
+    pub async fn of_request(
+        app: &App,
+        q: &HashMap<String, String>,
+        headers: &HeaderMap,
+    ) -> Result<Lang> {
+        Lang::of(&app.settings().await?, q, headers)
+    }
+
+    pub fn narrow(&self, kind: obx_types::lang::Kind, v: &mut Value) {
+        if let Some(sel) = &self.sel {
+            obx_types::lang::narrow(kind, v, sel, &self.languages);
+        }
+    }
+
+    /// Part of the `ETag` of a product.
+    pub fn etag_part(&self) -> String {
+        match &self.sel {
+            Some(s) if s.universal => "|universal".into(),
+            Some(s) => format!("|{}", s.tag),
+            None => String::new(),
+        }
+    }
+
+    /// `Vary: Accept-Language` always, `Content-Language` with a selection.
+    pub fn headers(&self, mut r: Response) -> Response {
+        let h = r.headers_mut();
+        h.append(header::VARY, HeaderValue::from_static("Accept-Language"));
+        if let Some(sel) = &self.sel {
+            if let Ok(v) = HeaderValue::from_str(sel.content_language()) {
+                h.insert(header::CONTENT_LANGUAGE, v);
+            }
+        }
+        r
+    }
+}
+
 // ---- handlers ------------------------------------------------------------------------
 
 pub fn capabilities(s: &Settings) -> Vec<&'static str> {
@@ -428,7 +494,12 @@ pub fn capabilities(s: &Settings) -> Vec<&'static str> {
     if s.portal.access_requests_enabled {
         c.push("access_requests");
     }
-    c.extend(["ingest", "ingest.server_renditions", "portal"]);
+    c.extend([
+        "ingest",
+        "ingest.server_renditions",
+        "portal",
+        obx_types::lang::CAPABILITY,
+    ]);
     c
 }
 
@@ -485,6 +556,7 @@ pub async fn discovery(State(app): State<App>) -> Res {
             .collect::<Vec<_>>(),
         "brands": brands,
         "languages": s.content_languages(),
+        "selectable_languages": selectable_languages(&s),
         "limits": {"changes_page_max": 500, "products_page_max": 100, "gtin_lookup_max": 2000,
                    "tombstone_retention_days": a.cfg.change_retention_days},
     }));
@@ -509,9 +581,14 @@ pub async fn grant(State(app): State<App>, headers: HeaderMap) -> Res {
     Ok(with_headers(ok(&g), &hs))
 }
 
-pub async fn brands(State(app): State<App>, headers: HeaderMap) -> Res {
+pub async fn brands(
+    State(app): State<App>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Res {
     let (v, hs) = protocol_auth(&app, &headers, "catalog:read", false).await?;
-    let items = app
+    let lang = Lang::of_request(&app, &q, &headers).await?;
+    let mut items = app
         .db
         .read(move |c| {
             let (bf, args) = v.brand_filter("id");
@@ -529,11 +606,20 @@ pub async fn brands(State(app): State<App>, headers: HeaderMap) -> Res {
             Ok(r)
         })
         .await?;
-    Ok(with_headers(ok(&json!({"items": items})), &hs))
+    items
+        .iter_mut()
+        .for_each(|b| lang.narrow(obx_types::lang::Kind::Brand, b));
+    Ok(lang.headers(with_headers(ok(&json!({"items": items})), &hs)))
 }
 
-pub async fn brand(State(app): State<App>, Path(id): Path<String>, headers: HeaderMap) -> Res {
+pub async fn brand(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Res {
     let (v, hs) = protocol_auth(&app, &headers, "catalog:read", false).await?;
+    let lang = Lang::of_request(&app, &q, &headers).await?;
     let b = app
         .db
         .read(move |c| {
@@ -543,7 +629,10 @@ pub async fn brand(State(app): State<App>, Path(id): Path<String>, headers: Head
         })
         .await?;
     match b {
-        Some(b) => Ok(with_headers(ok(&b), &hs)),
+        Some(mut b) => {
+            lang.narrow(obx_types::lang::Kind::Brand, &mut b);
+            Ok(lang.headers(with_headers(ok(&b), &hs)))
+        }
         None => Err(Problem::new("not_found", "Brand not found.")),
     }
 }
@@ -559,6 +648,7 @@ pub async fn products(
     headers: HeaderMap,
 ) -> Res {
     let (v, hs) = protocol_auth(&app, &headers, "catalog:read", false).await?;
+    let lang = Lang::of_request(&app, &q, &headers).await?;
     let limit = limit_param(&q, 25, 100)?;
     let mut where_ = String::from("WHERE visible = 1");
     let mut args: Vec<String> = Vec::new();
@@ -595,7 +685,7 @@ pub async fn products(
     where_.push_str(&bf);
     args.extend(bargs);
     let a = app.clone();
-    let (items, next) = app
+    let (mut items, next) = app
         .db
         .read(move |c| {
             let mut st = c.prepare(&format!(
@@ -620,23 +710,33 @@ pub async fn products(
             Ok((product_details(&a, c, &v, &ids)?, next))
         })
         .await?;
-    Ok(with_headers(
+    items
+        .iter_mut()
+        .for_each(|p| lang.narrow(obx_types::lang::Kind::ProductDetail, p));
+    Ok(lang.headers(with_headers(
         ok(&json!({"items": items, "next_cursor": next})),
         &hs,
-    ))
+    )))
 }
 
-pub async fn product(State(app): State<App>, Path(id): Path<String>, headers: HeaderMap) -> Res {
+pub async fn product(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Res {
     let (v, hs) = protocol_auth(&app, &headers, "catalog:read", false).await?;
+    let lang = Lang::of_request(&app, &q, &headers).await?;
     let a = app.clone();
     let mut items = app
         .db
         .read(move |c| product_details(&a, c, &v, &[id]))
         .await?;
-    let Some(p) = items.pop() else {
+    let Some(mut p) = items.pop() else {
         return Err(Problem::new("not_found", "Product not found."));
     };
-    let etag = format!("\"{}\"", product_etag(&p));
+    let etag = format!("\"{}{}\"", product_etag(&p), lang.etag_part());
+    lang.narrow(obx_types::lang::Kind::ProductDetail, &mut p);
     if let Some(m) = headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
@@ -645,13 +745,13 @@ pub async fn product(State(app): State<App>, Path(id): Path<String>, headers: He
             let mut r = StatusCode::NOT_MODIFIED.into_response();
             r.headers_mut()
                 .insert(header::ETAG, HeaderValue::from_str(&etag).unwrap());
-            return Ok(with_headers(r, &hs));
+            return Ok(lang.headers(with_headers(r, &hs)));
         }
     }
     let mut r = ok(&p);
     r.headers_mut()
         .insert(header::ETAG, HeaderValue::from_str(&etag).unwrap());
-    Ok(with_headers(r, &hs))
+    Ok(lang.headers(with_headers(r, &hs)))
 }
 
 /// GTIN lookup (protocol.md §7).
@@ -730,6 +830,7 @@ pub async fn by_gtin(
     body: Bytes,
 ) -> Res {
     let (v, hs) = protocol_auth(&app, &headers, "catalog:read", false).await?;
+    let lang = Lang::of_request(&app, &q, &headers).await?;
     let inputs: Vec<String> = if method == Method::GET {
         let raw = q.get("gtin").cloned().unwrap_or_default();
         if raw.trim().is_empty() {
@@ -765,11 +866,15 @@ pub async fn by_gtin(
         out
     };
     let a = app.clone();
-    let res = app
+    let mut res = app
         .db
         .read(move |c| lookup_gtins(&a, c, &v, &inputs))
         .await?;
-    Ok(with_headers(ok(&res), &hs))
+    if let Some(ps) = res["products"].as_array_mut() {
+        ps.iter_mut()
+            .for_each(|p| lang.narrow(obx_types::lang::Kind::ProductDetail, p));
+    }
+    Ok(lang.headers(with_headers(ok(&res), &hs)))
 }
 
 pub fn visible_asset(c: &Connection, v: &Viewer, id: &str) -> Result<Option<crate::catalog::Row>> {
@@ -786,8 +891,14 @@ pub fn visible_asset(c: &Connection, v: &Viewer, id: &str) -> Result<Option<crat
     Ok(Some(r))
 }
 
-pub async fn asset(State(app): State<App>, Path(id): Path<String>, headers: HeaderMap) -> Res {
+pub async fn asset(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Res {
     let (v, hs) = protocol_auth(&app, &headers, "media:read", false).await?;
+    let lang = Lang::of_request(&app, &q, &headers).await?;
     let a = app.clone();
     let out = app
         .db
@@ -796,7 +907,10 @@ pub async fn asset(State(app): State<App>, Path(id): Path<String>, headers: Head
         })
         .await?;
     match out {
-        Some(x) => Ok(with_headers(ok(&x), &hs)),
+        Some(mut x) => {
+            lang.narrow(obx_types::lang::Kind::Asset, &mut x);
+            Ok(lang.headers(with_headers(ok(&x), &hs)))
+        }
         None => Err(Problem::new("not_found", "Asset not found.")),
     }
 }

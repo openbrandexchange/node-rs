@@ -22,6 +22,7 @@
 pub mod appearance;
 pub mod gtin;
 pub mod ids;
+pub mod lang;
 pub mod model;
 pub mod problem;
 #[cfg(feature = "validate")]

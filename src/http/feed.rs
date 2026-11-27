@@ -33,14 +33,16 @@ pub async fn changes(
     headers: HeaderMap,
 ) -> Res {
     let (v, hs) = protocol_auth(&app, &headers, "catalog:read", false).await?;
+    let lang = super::protocol::Lang::of_request(&app, &q, &headers).await?;
     let limit = limit_param(&q, 100, 500)?;
     let cursor = q.get("cursor").cloned().unwrap_or_default();
     let a = app.clone();
+    let (sel, languages) = (lang.sel.clone(), lang.languages.clone());
     let page = app
         .db
-        .read(move |c| changes_page(&a, c, &v, &cursor, limit))
+        .read(move |c| changes_page(&a, c, &v, &cursor, limit, sel.as_ref(), &languages))
         .await?;
-    Ok(with_headers(ok(&page), &hs))
+    Ok(lang.headers(with_headers(ok(&page), &hs)))
 }
 
 pub fn changes_page(
@@ -49,6 +51,8 @@ pub fn changes_page(
     v: &Viewer,
     cursor: &str,
     limit: usize,
+    lang: Option<&obx_types::lang::Selection>,
+    languages: &[String],
 ) -> Result<Value> {
     let epoch = cursor_epoch(c)?;
     let pruned: i64 = crate::db::get_meta(c, "changes_pruned_below")?
@@ -63,7 +67,12 @@ pub fn changes_page(
         settings,
     };
     match feed.page(&mut src, cursor, limit) {
-        Ok(p) => Ok(serde_json::to_value(p).map_err(Problem::internal)?),
+        Ok(mut p) => {
+            if let Some(sel) = lang {
+                p.narrow(sel, languages);
+            }
+            Ok(serde_json::to_value(p).map_err(Problem::internal)?)
+        }
         Err(obx_feed::FeedError::Cursor(e)) => {
             Err(Problem::new(e.code(), e.detail(crate::app::SPEC_VERSION)))
         }

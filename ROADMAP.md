@@ -19,6 +19,7 @@ node-rs replaces node-go, node-php and node-ts as the single reference node of O
 | GTIN lookup (GET and POST) | ✓ | ✓ |
 | Assets, renditions (Range, If-None-Match, ETag, signed URLs, original only with media:original) | ✓ | ✓ (windowed signed URLs: one URL per hour window, `max-age` never past the expiry, spec proposal 0007) |
 | Change feed (snapshot, live, grant entries with resync, cursor epochs, 410/400, retention pruning) | ✓ | ✓ |
+| Language selection (`lang`, `Accept-Language`, `Content-Language`, `language_fallbacks`, `universal`; read endpoints, `/changes`, exports) | – | ✓ (spec proposal 0010, in `obx_types::lang` and `obx_feed::Page::narrow`; the cases of `expected/language-selection.json` in `obx-conformance`) |
 | Access requests (create, poll, credentials once, e-mails) | ✓ | ✓ |
 | Rate limits with RateLimit headers | ✓ | ✓ (per process, fixed window) |
 | Exports (`exports`) | ✓ | ✓ |
