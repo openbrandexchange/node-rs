@@ -87,6 +87,156 @@ async fn maison_noor_protocol_through_obx_client() {
     );
 }
 
+/// Language selection (spec proposal 0010): every case of
+/// `expected/language-selection.json` on MN-1001, and the feed (P-LANG-4).
+#[tokio::test(flavor = "multi_thread")]
+async fn language_selection_cases_of_the_spec() {
+    let n = Node::start().await;
+    n.import_fixtures().await;
+    let (_, id, secret) = n.api_client("Harbour", Map::new()).await;
+    let c = obx_client::Client::new(&n.base, &id, &secret).unwrap();
+    let cases = obx_conformance::LanguageCases::load();
+
+    let d = c.discovery().await.unwrap();
+    assert!(
+        d["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x == "language_selection")
+    );
+    assert_eq!(d["languages"], json!(cases.languages));
+    assert_eq!(d["selectable_languages"], json!(cases.selectable_languages));
+
+    let p = &c.by_gtin(&["2000100101025".into()]).await.unwrap().products[0];
+    assert_eq!(p["style_number"], cases.product.as_str());
+    let pid = p["id"].as_str().unwrap().to_string();
+    let token = c.token().await.unwrap();
+    let get = |path: String, accept: Option<String>| {
+        let mut r = n.http.get(format!("{}{path}", n.base)).bearer_auth(&token);
+        if let Some(a) = accept {
+            r = r.header("accept-language", a);
+        }
+        r.send()
+    };
+    let mut diffs = Vec::new();
+    for case in &cases.cases {
+        let q = case
+            .request
+            .lang
+            .as_ref()
+            .map(|l| format!("?lang={}", urlencoding_min(l)))
+            .unwrap_or_default();
+        let r = get(
+            format!("/obx/v1/products/{pid}{q}"),
+            case.request.accept_language.clone(),
+        )
+        .await
+        .unwrap();
+        let status = r.status().as_u16();
+        if status == 200 {
+            assert_eq!(
+                r.headers().get("vary").and_then(|v| v.to_str().ok()),
+                Some("Accept-Language"),
+                "{}",
+                case.name
+            );
+        }
+        let cl = r
+            .headers()
+            .get("content-language")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from);
+        let body: Value = r.json().await.unwrap();
+        diffs.extend(obx_conformance::check_language_case(
+            case,
+            status,
+            cl.as_deref(),
+            &body,
+        ));
+    }
+    assert!(diffs.is_empty(), "{diffs:#?}");
+
+    // P-LANG-4: the same snapshot entries with and without lang; data as GET returns it.
+    let walk = |lang: &'static str| {
+        let get = &get;
+        async move {
+            let (mut cursor, mut out) = (String::new(), Vec::new());
+            loop {
+                let r = get(
+                    format!("/obx/v1/changes?limit=200&cursor={cursor}{lang}"),
+                    None,
+                )
+                .await
+                .unwrap();
+                let page: Value = r.json().await.unwrap();
+                out.extend(page["changes"].as_array().unwrap().iter().cloned());
+                cursor = page["next_cursor"].as_str().unwrap().to_string();
+                if page["phase"] == "live" {
+                    break (out, cursor);
+                }
+            }
+        }
+    };
+    let (plain, _) = walk("").await;
+    let (de, cursor) = walk("&lang=de").await;
+    let key = |e: &Value| {
+        (
+            e["seq"].clone(),
+            e["type"].clone(),
+            e["op"].clone(),
+            e["id"].clone(),
+        )
+    };
+    assert_eq!(
+        plain.iter().map(key).collect::<Vec<_>>(),
+        de.iter().map(key).collect::<Vec<_>>()
+    );
+    let entry = de
+        .iter()
+        .find(|e| e["type"] == "product" && e["data"]["id"] == pid.as_str())
+        .unwrap();
+    let one: Value = get(format!("/obx/v1/products/{pid}?lang=de"), None)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(entry["data"]["name"], one["name"]);
+    assert_eq!(
+        entry["data"]["language_fallbacks"],
+        one["language_fallbacks"]
+    );
+    assert!(
+        plain
+            .iter()
+            .all(|e| e["data"].get("language_fallbacks").is_none())
+    );
+    // A cursor taken with lang=de continues with lang=en.
+    let r = get(format!("/obx/v1/changes?cursor={cursor}&lang=en"), None)
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    assert_eq!(
+        r.headers()
+            .get("content-language")
+            .and_then(|v| v.to_str().ok()),
+        Some("en")
+    );
+}
+
+fn urlencoding_min(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "-_.".contains(c) {
+                c.to_string()
+            } else {
+                format!("%{:02X}", c as u32)
+            }
+        })
+        .collect()
+}
+
 /// The spec's ingest script replayed over HTTP with an upload key.
 struct HttpIngest<'a> {
     n: &'a Node,

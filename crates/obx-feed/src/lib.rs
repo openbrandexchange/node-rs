@@ -139,6 +139,17 @@ pub struct Page {
     pub phase: &'static str,
 }
 
+impl Page {
+    /// Narrows every entry's `data` to a language selection (protocol.md
+    /// §2.3). The cursor, the entries and their order do not depend on the
+    /// selection, so a consumer may change `lang` between pages.
+    pub fn narrow(&mut self, sel: &obx_types::lang::Selection, languages: &[String]) {
+        for e in &mut self.changes {
+            obx_types::lang::narrow_change(e, sel, languages);
+        }
+    }
+}
+
 /// Why a cursor was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CursorError {
@@ -393,6 +404,36 @@ mod tests {
         }
         assert_eq!(n, 11, "4 types × 3 objects, one asset passed over");
         assert_eq!(s.live_calls, vec![42]);
+    }
+
+    #[test]
+    fn narrowing_a_page_keeps_cursor_and_entries() {
+        let c = codec();
+        let mut s = Src {
+            hw: 7,
+            live_calls: vec![],
+        };
+        let f = Feed::new(&c, 0, 0).at(1000);
+        let mut p = f.page(&mut s, "", 2).unwrap();
+        let (cursor, n) = (p.next_cursor.clone(), p.changes.len());
+        p.changes.push(
+            serde_json::json!({"seq": 8, "type": "product", "op": "upsert",
+            "data": {"name": {"en": "Sweater", "nl": "Trui"}}}),
+        );
+        let sel = obx_types::lang::Selection {
+            tag: "nl".into(),
+            universal: false,
+        };
+        p.narrow(&sel, &["nl".to_string(), "en".to_string()]);
+        assert_eq!((p.next_cursor, p.changes.len()), (cursor, n + 1));
+        assert_eq!(
+            p.changes[n]["data"]["name"],
+            serde_json::json!({"nl": "Trui"})
+        );
+        assert_eq!(
+            p.changes[n]["data"]["language_fallbacks"],
+            serde_json::json!({})
+        );
     }
 
     #[test]

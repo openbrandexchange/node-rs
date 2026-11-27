@@ -16,5 +16,6 @@ workspace = true
 
 [dependencies]
 obx-auth = { version = "0.1.0", path = "../obx-auth" }
+obx-types = { version = "0.1.0", path = "../obx-types", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }

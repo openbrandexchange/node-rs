@@ -108,6 +108,18 @@ pub fn care() -> &'static Vocabulary {
     &CARE
 }
 
+/// Every language any vocabulary has a name in, sorted (`de`, `en`, `fr`,
+/// `nl`): the term-only languages of discovery `selectable_languages`.
+pub fn languages() -> Vec<String> {
+    let mut out: Vec<String> = [parts(), materials(), qualifiers(), care()]
+        .iter()
+        .flat_map(|v| v.entries().iter().flat_map(|e| e.name.keys().cloned()))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,6 +130,7 @@ mod tests {
         assert!(main.name.is_empty());
         assert_eq!(parts().lookup("outer").unwrap().name["en"], "Outer fabric");
         assert!(materials().has("cotton") && materials().has("merino_wool"));
+        assert_eq!(languages(), ["de", "en", "fr", "nl"]);
         assert!(qualifiers().has("recycled") && qualifiers().has("organic"));
         let w = care().lookup("wash_95").unwrap();
         assert_eq!(w.category.as_deref(), Some("washing"));

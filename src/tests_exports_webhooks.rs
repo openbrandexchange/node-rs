@@ -442,3 +442,82 @@ async fn failed_deliveries_are_retried_later() {
         .unwrap();
     assert!(failing.is_some());
 }
+
+/// An export with `lang` (spec proposal 0010) writes its objects as the read
+/// endpoints with `?lang=` do; a malformed tag is refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn export_in_one_language() {
+    let n = node().await;
+    let bad = n
+        .req(reqwest::Method::POST, "/obx/v1/exports")
+        .json(&json!({"renditions": [], "lang": "en--GB"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 422);
+    let e: Value = n
+        .req(reqwest::Method::POST, "/obx/v1/exports")
+        .json(&json!({"renditions": [], "lang": "de"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = e["id"].as_str().unwrap().to_string();
+    let mut done = Value::Null;
+    for _ in 0..200 {
+        done = n
+            .req(reqwest::Method::GET, &format!("/obx/v1/exports/{id}"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if done["status"] != "queued" && done["status"] != "running" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(done["status"], "succeeded", "{done}");
+    let manifest = reqwest::get(done["manifest_url"].as_str().unwrap())
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let lines: Vec<Value> = manifest
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let p = lines
+        .iter()
+        .find(|l| l["type"] == "product" && l["data"]["style_number"] == "MN-1001")
+        .expect("MN-1001 in the manifest");
+    assert_eq!(
+        p["data"]["materials"][0]["fibers"][0]["material"]["name"],
+        json!({"de": "Merinowolle"})
+    );
+    let name_tag = p["data"]["language_fallbacks"]["/name"]
+        .as_str()
+        .expect("the name has no German text");
+    assert_eq!(
+        p["data"]["name"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        [name_tag]
+    );
+    for l in lines
+        .iter()
+        .filter(|l| l["type"] != "header" && l["type"] != "file")
+    {
+        assert!(l["data"]["language_fallbacks"].is_object(), "{l}");
+        assert!(
+            crate::schemas::validate("ExportManifestLine", l).is_empty(),
+            "{l}"
+        );
+    }
+}

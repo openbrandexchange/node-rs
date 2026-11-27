@@ -29,6 +29,9 @@ pub struct ExportRequest {
     pub renditions: Vec<String>,
     #[serde(default)]
     pub include_data: Option<bool>,
+    /// Language selection (protocol.md §2.3): a tag or `universal`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
